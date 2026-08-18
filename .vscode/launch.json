@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "运行扩展（热更新模式）",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "dev: hot-reload",
+      "env": {
+        "CT_WEBVIEW_DEV": "1"
+      },
+      "presentation": {
+        "group": "dev",
+        "order": 1
+      }
+    },
+    {
+      "name": "运行扩展（生产产物模式）",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: build",
+      "presentation": {
+        "group": "dev",
+        "order": 2
+      }
+    }
+  ]
+}

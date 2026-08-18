@@ -1,0 +1,57 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "build",
+      "label": "npm: build",
+      "problemMatcher": []
+    },
+    {
+      "type": "npm",
+      "script": "watch",
+      "label": "npm: watch",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "esbuild",
+        "pattern": {
+          "regexp": "^[^\\s].*error",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "build finished"
+        }
+      }
+    },
+    {
+      "type": "npm",
+      "script": "dev:webview",
+      "label": "npm: dev:webview",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^[^\\s].*error",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Local:"
+        }
+      }
+    },
+    {
+      "label": "dev: hot-reload",
+      "dependsOn": ["npm: watch", "npm: dev:webview"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+import * as vscode from 'vscode';
+import { RecentPanel, ConnectionStore } from '../connection/ConnectionStore';
+import { ConnectionManager } from '../connection/ConnectionManager';
+import { openQueryPanel } from '../webviews/queryPanel';
+import { openTablePanel } from '../webviews/tablePanel';
+
+const MAX_PANELS = 10;
+
+/** 面板唯一 key（去重） */
+function panelKey(p: RecentPanel): string {
+  return p.type === 'query'
+    ? `query:${p.connId}`
+    : `table:${p.connId}:${p.database}:${p.table}`;
+}
+
+/** 打开面板时记录（去重置顶，保留最近 MAX_PANELS 个） */
+export async function rememberPanel(store: ConnectionStore, panel: RecentPanel): Promise<void> {
+  const list = store.getRecentPanels().filter(p => panelKey(p) !== panelKey(panel));
+  list.unshift(panel);
+  await store.saveRecentPanels(list.slice(0, MAX_PANELS));
+}
+
+/**
+ * 插件加载后恢复最近窗口：
+ * - 逐个自动重连对应连接（失败跳过并汇总提示）
+ * - 重新打开查询 / 表数据面板
+ */
+export async function restorePanels(
+  context: vscode.ExtensionContext,
+  store: ConnectionStore,
+  manager: ConnectionManager,
+): Promise<void> {
+  const list = store.getRecentPanels();
+  if (list.length === 0) {
+    return;
+  }
+  const failed: string[] = [];
+  for (const p of list) {
+    try {
+      if (manager.getStatus(p.connId) !== 'connected') {
+        await manager.connect(p.connId);
+      }
+      const config = store.get(p.connId);
+      if (!config) {
+        continue;
+      }
+      if (p.type === 'query') {
+        openQueryPanel(context, manager, config);
+      } else if (p.type === 'table' && p.database && p.table) {
+        openTablePanel(context, manager, config, p.database, p.table);
+      }
+    } catch {
+      failed.push(p.connName);
+    }
+  }
+  if (failed.length > 0) {
+    vscode.window.showWarningMessage(
+      `部分窗口未能恢复（连接失败）：${failed.join('、')}，请在连接树中手动连接后重新打开`,
+    );
+  }
+}

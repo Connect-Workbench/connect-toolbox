@@ -1,0 +1,196 @@
+{
+  "name": "connect-toolbox",
+  "displayName": "Connect Toolbox",
+  "description": "SSH / MySQL / Redis 连接管理工具箱：远程终端、数据查询与编辑",
+  "version": "0.1.0",
+  "publisher": "billbillliu",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ssh",
+    "mysql",
+    "redis",
+    "database",
+    "terminal"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "connectToolbox.addConnection",
+        "title": "新建连接",
+        "icon": "$(add)"
+      },
+      {
+        "command": "connectToolbox.editConnection",
+        "title": "编辑连接",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "connectToolbox.removeConnection",
+        "title": "删除连接",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "connectToolbox.connect",
+        "title": "连接",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "connectToolbox.disconnect",
+        "title": "断开连接",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "connectToolbox.openTerminal",
+        "title": "打开 SSH 终端",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "connectToolbox.openQueryPanel",
+        "title": "打开查询面板",
+        "icon": "$(notebook-execute)"
+      },
+      {
+        "command": "connectToolbox.openTableData",
+        "title": "打开表数据",
+        "icon": "$(table)"
+      },
+      {
+        "command": "connectToolbox.showCreateTable",
+        "title": "查看建表语句",
+        "icon": "$(code)"
+      },
+      {
+        "command": "connectToolbox.filterTree",
+        "title": "过滤数据库 / 表",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "connectToolbox.refresh",
+        "title": "刷新",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "connectToolbox.editCell",
+        "title": "编辑单元格（在编辑器中打开）",
+        "icon": "$(edit)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "connectToolbox",
+          "title": "Connect Toolbox",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "connectToolbox": [
+        {
+          "id": "connectToolbox.connections",
+          "name": "连接"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "connectToolbox.addConnection",
+          "when": "view == connectToolbox.connections",
+          "group": "navigation@1"
+        },
+        {
+          "command": "connectToolbox.refresh",
+          "when": "view == connectToolbox.connections",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "connectToolbox.connect",
+          "when": "view == connectToolbox.connections && viewItem =~ /^(mysql|redis|ssh)Connection$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "connectToolbox.disconnect",
+          "when": "view == connectToolbox.connections && viewItem =~ /ConnectionConnected$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "connectToolbox.openTerminal",
+          "when": "view == connectToolbox.connections && viewItem == sshConnectionConnected",
+          "group": "inline@3"
+        },
+        {
+          "command": "connectToolbox.openQueryPanel",
+          "when": "view == connectToolbox.connections && viewItem == mysqlConnectionConnected",
+          "group": "inline@3"
+        },
+        {
+          "command": "connectToolbox.filterTree",
+          "when": "view == connectToolbox.connections && viewItem =~ /^(mysqlConnectionConnected|mysqlDatabase)$/",
+          "group": "inline@4"
+        },
+        {
+          "command": "connectToolbox.openTableData",
+          "when": "view == connectToolbox.connections && viewItem == mysqlTable",
+          "group": "inline@1"
+        },
+        {
+          "command": "connectToolbox.showCreateTable",
+          "when": "view == connectToolbox.connections && viewItem == mysqlTable",
+          "group": "1_view@1"
+        },
+        {
+          "command": "connectToolbox.refresh",
+          "when": "view == connectToolbox.connections && viewItem =~ /^(mysqlConnection|mysqlDatabase|mysqlTable)/",
+          "group": "9_refresh@1"
+        },
+        {
+          "command": "connectToolbox.editConnection",
+          "when": "view == connectToolbox.connections && viewItem =~ /Connection/",
+          "group": "1_modify@1"
+        },
+        {
+          "command": "connectToolbox.removeConnection",
+          "when": "view == connectToolbox.connections && viewItem =~ /Connection/",
+          "group": "9_delete@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "npm run build:webview && node esbuild.mjs",
+    "build:webview": "cd webview && npm run build",
+    "watch": "node esbuild.mjs --watch",
+    "dev:webview": "cd webview && npm run dev",
+    "typecheck": "tsc --noEmit",
+    "typecheck:webview": "cd webview && npm run typecheck",
+    "package": "npm run build && vsce package"
+  },
+  "dependencies": {
+    "ag-grid-community": "^36.1.0",
+    "mysql2": "^3.23.3",
+    "pino": "^10.3.1",
+    "sql-formatter": "^15.8.2",
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ssh2": "^1.15.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.0"
+  }
+}
