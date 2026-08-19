@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ColumnInfo } from '../clients/MySqlClient';
+import { t } from '../i18n';
 
 export class MysqlDatabaseNode extends vscode.TreeItem {
   constructor(
@@ -24,7 +25,7 @@ export class MysqlTableNode extends vscode.TreeItem {
     super(table, expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     this.contextValue = 'mysqlTable';
     this.iconPath = new vscode.ThemeIcon(tableType === 'VIEW' ? 'eye' : 'table');
-    this.description = tableType === 'VIEW' ? '视图' : undefined;
+    this.description = tableType === 'VIEW' ? t('view') : undefined;
   }
 }
 
@@ -43,10 +44,10 @@ export class MysqlColumnNode extends vscode.TreeItem {
       [
         `**${column.field}**  \`${column.type}\``,
         '',
-        `- 可空: ${column.nullable ? '是' : '否'}`,
-        `- 键: \`${column.key || '-'}\``,
-        `- 默认值: \`${column.default ?? 'NULL'}\``,
-        column.extra ? `- 附加: \`${column.extra}\`` : '',
+        `- ${t('nullable')}: ${column.nullable ? t('yes') : t('no')}`,
+        `- ${t('key')}: \`${column.key || '-'}\``,
+        `- ${t('defaultValue')}: \`${column.default ?? 'NULL'}\``,
+        column.extra ? `- ${t('extra')}: \`${column.extra}\`` : '',
       ]
         .filter(Boolean)
         .join('\n'),

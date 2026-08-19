@@ -3,6 +3,7 @@ import { ConnectionConfig, ConnectionStatus, ConnectionType } from '../connectio
 import { ConnectionStore } from '../connection/ConnectionStore';
 import { ConnectionManager } from '../connection/ConnectionManager';
 import { MysqlColumnNode, MysqlDatabaseNode, MysqlTableNode } from './nodes';
+import { t } from '../i18n';
 
 /** 连接类型对应的默认图标 */
 const TYPE_ICON: Record<ConnectionType, string> = {
@@ -19,17 +20,10 @@ const STATUS_ICON: Record<ConnectionStatus, string | null> = {
   error: 'error',
 };
 
-const STATUS_LABEL: Record<ConnectionStatus, string> = {
-  disconnected: '未连接',
-  connecting: '连接中',
-  connected: '已连接',
-  error: '失败',
-};
-
-const DEFAULT_GROUP = '默认分组';
+const DEFAULT_GROUP_KEY = '__default__';
 
 class GroupNode extends vscode.TreeItem {
-  constructor(readonly groupName: string, expanded: boolean) {
+  constructor(readonly groupKey: string, groupName: string, expanded: boolean) {
     super(groupName, expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     this.contextValue = 'group';
     this.iconPath = new vscode.ThemeIcon('folder');
@@ -39,7 +33,7 @@ class GroupNode extends vscode.TreeItem {
 /** 树节点展开状态 key（持久化用） */
 export function nodeExpandKey(el: vscode.TreeItem | undefined): string | undefined {
   if (el instanceof GroupNode) {
-    return `group:${el.groupName}`;
+    return `group:${el.groupKey}`;
   }
   if (el instanceof ConnectionNode) {
     return `conn:${el.config.id}`;
@@ -66,10 +60,16 @@ export class ConnectionNode extends vscode.TreeItem {
       [
         `**${config.name}**  \`${config.type}\``,
         '',
-        `- 主机: \`${config.host}:${config.port}\``,
-        config.username ? `- 用户: \`${config.username}\`` : '',
-        config.viaSsh ? '- 通道: SSH 隧道' : '',
-        `- 状态: \`${STATUS_LABEL[status]}\``,
+        `- ${t('host')}: \`${config.host}:${config.port}\``,
+        config.username ? `- ${t('user')}: \`${config.username}\`` : '',
+        config.viaSsh ? `- ${t('channel')}: ${t('sshTunnel')}` : '',
+        `- ${t('status')}: \`${status === 'disconnected'
+          ? t('statusDisconnected')
+          : status === 'connecting'
+            ? t('statusConnecting')
+            : status === 'connected'
+              ? t('statusConnected')
+              : t('statusError')}\``,
       ]
         .filter(Boolean)
         .join('\n'),
@@ -123,13 +123,17 @@ export class ConnectionTreeProvider implements vscode.TreeDataProvider<vscode.Tr
 
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     if (!element) {
-      const groups = [...new Set(this.store.list().map(c => c.group || DEFAULT_GROUP))];
-      return groups.map(g => new GroupNode(g, this.isExpanded(`group:${g}`)));
+      const groups = [...new Set(this.store.list().map(c => c.group || DEFAULT_GROUP_KEY))];
+      return groups.map(groupKey => new GroupNode(
+        groupKey,
+        groupKey === DEFAULT_GROUP_KEY ? t('defaultGroup') : groupKey,
+        this.isExpanded(`group:${groupKey}`),
+      ));
     }
     if (element instanceof GroupNode) {
       return this.store
         .list()
-        .filter(c => (c.group || DEFAULT_GROUP) === element.groupName)
+        .filter(c => (c.group || DEFAULT_GROUP_KEY) === element.groupKey)
         .map(c => {
           const status = this.manager.getStatus(c.id);
           const node = new ConnectionNode(c, status);
@@ -163,7 +167,7 @@ export class ConnectionTreeProvider implements vscode.TreeDataProvider<vscode.Tr
   private async getDatabases(connectionId: string): Promise<vscode.TreeItem[]> {
     const client = this.manager.getMySqlClient(connectionId);
     if (!client) {
-      return [errorNode('MySQL 未连接，请重新连接')];
+      return [errorNode(t('mysqlNotConnectedReconnect'))];
     }
     try {
       const databases = await client.listDatabases();
@@ -180,7 +184,7 @@ export class ConnectionTreeProvider implements vscode.TreeDataProvider<vscode.Tr
   private async getTables(connectionId: string, database: string): Promise<vscode.TreeItem[]> {
     const client = this.manager.getMySqlClient(connectionId);
     if (!client) {
-      return [errorNode('MySQL 未连接，请重新连接')];
+      return [errorNode(t('mysqlNotConnectedReconnect'))];
     }
     try {
       const tables = await client.listTables(database);
@@ -208,7 +212,7 @@ export class ConnectionTreeProvider implements vscode.TreeDataProvider<vscode.Tr
   ): Promise<vscode.TreeItem[]> {
     const client = this.manager.getMySqlClient(connectionId);
     if (!client) {
-      return [errorNode('MySQL 未连接，请重新连接')];
+      return [errorNode(t('mysqlNotConnectedReconnect'))];
     }
     try {
       const columns = await client.describeTable(database, table);
@@ -222,7 +226,7 @@ export class ConnectionTreeProvider implements vscode.TreeDataProvider<vscode.Tr
 }
 
 function errorNode(message: string): vscode.TreeItem {
-  const node = new vscode.TreeItem(`加载失败：${message}`, vscode.TreeItemCollapsibleState.None);
+  const node = new vscode.TreeItem(t('loadFailed', { message }), vscode.TreeItemCollapsibleState.None);
   node.iconPath = new vscode.ThemeIcon('error');
   return node;
 }

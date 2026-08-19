@@ -13,6 +13,44 @@ export interface ColumnDef {
 /** 单元格值（主进程已序列化：Date→ISO、Buffer→{__type:'hex',value}、bigint→string） */
 export type CellValue = string | number | null | { __type: 'hex'; value: string };
 
+/** 与 MySQL 一致的过滤操作符，直接展示给有 SQL 经验的用户 */
+export type FilterOperator =
+  | '='
+  | '!='
+  | '<>'
+  | '>'
+  | '>='
+  | '<'
+  | '<='
+  | 'LIKE'
+  | 'NOT LIKE'
+  | 'IN'
+  | 'NOT IN'
+  | 'BETWEEN'
+  | 'NOT BETWEEN'
+  | 'REGEXP'
+  | 'NOT REGEXP'
+  | 'IS NULL'
+  | 'IS NOT NULL';
+
+export interface SortSpec {
+  field: string;
+  direction: 'asc' | 'desc';
+}
+
+export interface FilterSpec {
+  field: string;
+  operator: FilterOperator;
+  value?: string;
+}
+
+export interface TableQuery {
+  sort?: SortSpec;
+  filters: FilterSpec[];
+  /** 单表 SQL WHERE 条件（不含完整 SELECT） */
+  sqlFilter?: string;
+}
+
 export interface PagePayload {
   connectionName: string;
   database: string;
@@ -24,6 +62,7 @@ export interface PagePayload {
   pageSize: number;
   hasPk: boolean;
   pkColumns: string[];
+  query?: TableQuery;
 }
 
 export interface PanelMessage {
@@ -75,6 +114,7 @@ export interface UiMessage {
     newValue?: string;
     values?: Record<string, string>;
     commit?: CommitPayload;
+    query?: TableQuery;
     rowKey?: string;
     field?: string;
     value?: string;

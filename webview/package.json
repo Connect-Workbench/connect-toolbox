@@ -10,6 +10,12 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.9",
     "antd": "^6.6.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

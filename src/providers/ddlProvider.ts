@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { t } from '../i18n';
 
 const SCHEME = 'connecttoolbox-ddl';
 const contents = new Map<string, string>();
@@ -11,7 +12,7 @@ export function registerDdlProvider(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(SCHEME, {
       provideTextDocumentContent: uri =>
-        contents.get(uri.toString()) ?? '-- 内容已过期，请在连接树中重新查看',
+        contents.get(uri.toString()) ?? t('ddlExpired'),
     }),
   );
 }

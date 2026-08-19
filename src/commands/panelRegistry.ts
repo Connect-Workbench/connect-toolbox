@@ -3,6 +3,7 @@ import { RecentPanel, ConnectionStore } from '../connection/ConnectionStore';
 import { ConnectionManager } from '../connection/ConnectionManager';
 import { openQueryPanel } from '../webviews/queryPanel';
 import { openTablePanel } from '../webviews/tablePanel';
+import { t } from '../i18n';
 
 const MAX_PANELS = 10;
 
@@ -55,7 +56,7 @@ export async function restorePanels(
   }
   if (failed.length > 0) {
     vscode.window.showWarningMessage(
-      `部分窗口未能恢复（连接失败）：${failed.join('、')}，请在连接树中手动连接后重新打开`,
+      t('panelsRestoreFailed', { names: failed.join('、') }),
     );
   }
 }

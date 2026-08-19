@@ -1,7 +1,7 @@
 {
   "name": "connect-toolbox",
-  "displayName": "Connect Toolbox",
-  "description": "SSH / MySQL / Redis 连接管理工具箱：远程终端、数据查询与编辑",
+  "displayName": "%displayName%",
+  "description": "%description%",
   "version": "0.1.0",
   "publisher": "billbillliu",
   "license": "MIT",
@@ -26,62 +26,62 @@
     "commands": [
       {
         "command": "connectToolbox.addConnection",
-        "title": "新建连接",
+        "title": "%command.addConnection%",
         "icon": "$(add)"
       },
       {
         "command": "connectToolbox.editConnection",
-        "title": "编辑连接",
+        "title": "%command.editConnection%",
         "icon": "$(edit)"
       },
       {
         "command": "connectToolbox.removeConnection",
-        "title": "删除连接",
+        "title": "%command.removeConnection%",
         "icon": "$(trash)"
       },
       {
         "command": "connectToolbox.connect",
-        "title": "连接",
+        "title": "%command.connect%",
         "icon": "$(plug)"
       },
       {
         "command": "connectToolbox.disconnect",
-        "title": "断开连接",
+        "title": "%command.disconnect%",
         "icon": "$(debug-disconnect)"
       },
       {
         "command": "connectToolbox.openTerminal",
-        "title": "打开 SSH 终端",
+        "title": "%command.openTerminal%",
         "icon": "$(terminal)"
       },
       {
         "command": "connectToolbox.openQueryPanel",
-        "title": "打开查询面板",
+        "title": "%command.openQueryPanel%",
         "icon": "$(notebook-execute)"
       },
       {
         "command": "connectToolbox.openTableData",
-        "title": "打开表数据",
+        "title": "%command.openTableData%",
         "icon": "$(table)"
       },
       {
         "command": "connectToolbox.showCreateTable",
-        "title": "查看建表语句",
+        "title": "%command.showCreateTable%",
         "icon": "$(code)"
       },
       {
         "command": "connectToolbox.filterTree",
-        "title": "过滤数据库 / 表",
+        "title": "%command.filterTree%",
         "icon": "$(filter)"
       },
       {
         "command": "connectToolbox.refresh",
-        "title": "刷新",
+        "title": "%command.refresh%",
         "icon": "$(refresh)"
       },
       {
         "command": "connectToolbox.editCell",
-        "title": "编辑单元格（在编辑器中打开）",
+        "title": "%command.editCell%",
         "icon": "$(edit)"
       }
     ],
@@ -89,7 +89,7 @@
       "activitybar": [
         {
           "id": "connectToolbox",
-          "title": "Connect Toolbox",
+          "title": "%viewContainer.connectToolbox%",
           "icon": "resources/icon.svg"
         }
       ]
@@ -98,7 +98,7 @@
       "connectToolbox": [
         {
           "id": "connectToolbox.connections",
-          "name": "连接"
+          "name": "%view.connections%"
         }
       ]
     },

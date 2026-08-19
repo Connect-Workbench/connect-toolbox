@@ -3,12 +3,14 @@ import { ConnectionStore, TreeFilter } from '../connection/ConnectionStore';
 import { ConnectionManager } from '../connection/ConnectionManager';
 import { ConnectionNode, ConnectionTreeProvider } from '../providers/ConnectionTreeProvider';
 import { MysqlDatabaseNode, MysqlTableNode } from '../providers/nodes';
+import { t } from '../i18n';
 
 type Target = MysqlDatabaseNode | MysqlTableNode | ConnectionNode;
 
 /**
  * 过滤数据库 / 过滤表（多选 QuickPick，支持搜索；空选择 = 不过滤显示全部）。
  * 选择持久化到 globalState（按连接 id），树刷新后只显示选中的项。
+ * QuickPick 失去焦点时也会保存当前选择并关闭，和 Webview 的列设置面板保持一致。
  */
 export async function runFilter(
   store: ConnectionStore,
@@ -22,7 +24,7 @@ export async function runFilter(
   }
   const client = manager.getMySqlClient(connectionId);
   if (!client) {
-    vscode.window.showWarningMessage('MySQL 尚未连接，请先连接');
+    vscode.window.showWarningMessage(t('filterMysqlNotConnected'));
     return;
   }
 
@@ -30,7 +32,7 @@ export async function runFilter(
     const current: TreeFilter = store.getTreeFilter(connectionId) ?? {};
     if (kind === 'database') {
       const all = await client.listDatabases();
-      const picked = await multiPick(all, current.databases ?? [], '选择要显示的数据库（可搜索，留空=显示全部）');
+      const picked = await multiPick(all, current.databases ?? [], t('chooseDatabases'));
       if (picked === undefined) {
         return;
       }
@@ -40,7 +42,7 @@ export async function runFilter(
       const picked = await multiPick(
         all,
         current.tablesByDb?.[database] ?? [],
-        `选择要显示的表（${database}，留空=显示全部）`,
+        t('chooseTables', { database }),
       );
       if (picked === undefined) {
         return;
@@ -52,7 +54,7 @@ export async function runFilter(
     }
     tree.refresh();
   } catch (err) {
-    vscode.window.showErrorMessage(`过滤失败：${(err as Error).message}`);
+    vscode.window.showErrorMessage(t('filterFailed', { message: (err as Error).message }));
   }
 }
 
@@ -74,22 +76,41 @@ function resolveTarget(
   return { kind: 'database' };
 }
 
-async function multiPick(
+function multiPick(
   all: string[],
   selected: string[],
   placeHolder: string,
 ): Promise<string[] | undefined> {
-  const pick = await vscode.window.showQuickPick(
-    all.map(name => ({ label: name, picked: selected.includes(name) })),
-    {
-      placeHolder,
-      canPickMany: true,
-      matchOnDescription: true,
-      ignoreFocusOut: true,
-    },
-  );
-  if (pick === undefined) {
-    return undefined;
-  }
-  return pick.map(p => p.label);
+  return new Promise((resolve) => {
+    const pick = vscode.window.createQuickPick<vscode.QuickPickItem>();
+    let settled = false;
+
+    pick.items = all.map(name => ({
+      label: name,
+      picked: selected.includes(name),
+    }));
+    pick.placeholder = placeHolder;
+    pick.canSelectMany = true;
+    pick.matchOnDescription = true;
+    // 失去焦点即隐藏；onDidHide 会把当前勾选结果保存下来
+    pick.ignoreFocusOut = false;
+
+    const finish = (value: string[]) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      pick.hide();
+      pick.dispose();
+    };
+
+    pick.onDidAccept(() => {
+      finish(pick.selectedItems.map(item => item.label));
+    });
+    pick.onDidHide(() => {
+      // QuickPick 没有区分“失去焦点”和 Escape 的关闭原因；两者统一按关闭即保存处理。
+      finish(pick.selectedItems.map(item => item.label));
+    });
+
+    pick.show();
+  });
 }

@@ -2,6 +2,7 @@ import React from 'react';
 import { Button, Form, Input, Modal, Space } from 'antd';
 import { postMessage } from '../../vscodeBridge';
 import { ColumnDef } from './types';
+import { t } from '../../i18n';
 
 interface Props {
   columns: ColumnDef[];
@@ -25,12 +26,12 @@ export function AddRowModal({ columns, page, onClose, onAdded }: Props): React.J
   return (
     <Modal
       open
-      title="新增行（auto_increment 列自动生成）"
+      title={t('addRowTitle')}
       onCancel={onClose}
       footer={
         <Space>
-          <Button onClick={onClose}>取消</Button>
-          <Button type="primary" onClick={submit}>提交插入</Button>
+          <Button onClick={onClose}>{t('cancel')}</Button>
+          <Button type="primary" onClick={submit}>{t('submitInsert')}</Button>
         </Space>
       }
       width={720}
@@ -42,7 +43,7 @@ export function AddRowModal({ columns, page, onClose, onAdded }: Props): React.J
               key={c.field}
               name={c.field}
               label={c.field + (c.nullable ? '' : ' *')}
-              rules={c.nullable ? [] : [{ required: true, message: `请输入 ${c.field}` }]}
+              rules={c.nullable ? [] : [{ required: true, message: t('requiredField', { field: c.field }) }]}
               style={{ marginBottom: 8 }}
             >
               <Input placeholder={c.type} style={{ fontFamily: 'monospace', fontSize: 12 }} />

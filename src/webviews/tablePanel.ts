@@ -1,11 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ColumnInfo, qualifiedTable } from '../clients/MySqlClient';
+import { ColumnInfo, qualifiedTable, TableQuery } from '../clients/MySqlClient';
 import { ConnectionConfig } from '../connection/types';
 import { ConnectionManager } from '../connection/ConnectionManager';
 import { detectLanguage } from '../providers/cellEditor';
 import { info, error } from '../utils/logger';
+import { locale, t } from '../i18n';
 
 const PAGE_SIZE = 50;
 
@@ -18,6 +19,7 @@ interface PanelMessage {
     newValue?: string;
     values?: Record<string, string>;
     count?: number;
+    query?: TableQuery;
     commit?: {
       inserts: Record<string, string>[];
       updates: { pkValues: string[]; changes: Record<string, string> }[];
@@ -40,6 +42,7 @@ interface PagePayload {
   pageSize: number;
   hasPk: boolean;
   pkColumns: string[];
+  query: TableQuery;
 }
 
 const DEV_SERVER = 'http://localhost:5173';
@@ -58,7 +61,7 @@ export function openTablePanel(
 ): void {
   const panel = vscode.window.createWebviewPanel(
     `connectToolbox.table.${config.id}.${database}.${table}`,
-    `表数据：${database}.${table}`,
+    t('tablePanelTitle', { database, table }),
     vscode.ViewColumn.Active,
     {
       enableScripts: true,
@@ -78,26 +81,43 @@ export function openTablePanel(
   panel.onDidDispose(() => {
     if (dirtyCount > 0) {
       void vscode.window.showWarningMessage(
-        `表数据面板已关闭：还有 ${dirtyCount} 项未提交的本地变更已丢失（未写入数据库）。`,
+        t('panelClosedWithChanges', { count: dirtyCount }),
         { modal: true },
       );
     }
   });
 
   const sendError = (message: string) => panel.webview.postMessage({ type: 'error', message });
-  const sendPage = async (page: number) => {
+  let currentQuery: TableQuery = { filters: [] };
+  let pageRequestSerial = 0;
+  const sendPage = async (page: number, query: TableQuery = currentQuery) => {
     const client = manager.getMySqlClient(config.id);
     if (!client) {
-      sendError('MySQL 未连接，请先在连接树中连接');
+      sendError(t('mysqlNotConnected'));
       return;
     }
+    const normalizedQuery: TableQuery = {
+      sort: query.sort,
+      filters: query.filters ?? [],
+      sqlFilter: query.sqlFilter?.trim() || undefined,
+    };
+    currentQuery = normalizedQuery;
+    const requestSerial = ++pageRequestSerial;
     try {
-      const [columns, pkColumns, result, total] = await Promise.all([
-        client.describeTable(database, table),
-        client.getPrimaryKey(database, table).then(pk => pk ?? []),
-        client.selectPage(database, table, (page - 1) * PAGE_SIZE, PAGE_SIZE),
-        client.count(database, table),
-      ]);
+      const columns = await client.describeTable(database, table);
+      const pkColumns = columns.filter(column => column.key === 'PRI').map(column => column.field);
+      const total = await client.count(database, table, normalizedQuery, columns);
+      const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+      const safePage = Math.min(Math.max(1, Math.floor(page) || 1), maxPage);
+      const result = await client.selectPage(
+        database,
+        table,
+        (safePage - 1) * PAGE_SIZE,
+        PAGE_SIZE,
+        normalizedQuery,
+        columns,
+      );
+      if (requestSerial !== pageRequestSerial) return;
       const payload: PagePayload = {
         connectionName: config.name,
         database,
@@ -105,14 +125,17 @@ export function openTablePanel(
         columns,
         rows: result.rows,
         total,
-        page,
+        page: safePage,
         pageSize: PAGE_SIZE,
         hasPk: pkColumns.length > 0,
         pkColumns,
+        query: normalizedQuery,
       };
       panel.webview.postMessage({ type: 'page', payload });
     } catch (err) {
-      sendError((err as Error).message);
+      if (requestSerial === pageRequestSerial) {
+        sendError((err as Error).message);
+      }
     }
   };
 
@@ -124,18 +147,18 @@ export function openTablePanel(
     }
     const client = manager.getMySqlClient(config.id);
     if (!client) {
-      sendError('MySQL 未连接，请先在连接树中连接');
+      sendError(t('mysqlNotConnected'));
       return;
     }
     try {
       switch (msg.type) {
         case 'loadPage':
-          await sendPage(msg.payload.page ?? 1);
+          await sendPage(msg.payload.page ?? 1, msg.payload.query ?? currentQuery);
           return;
         case 'updateCell': {
           const { pkValues, column, newValue } = msg.payload;
           if (!column || !pkValues || pkValues.length === 0) {
-            sendError('缺少主键信息，无法定位行');
+            sendError(t('missingPrimaryKey'));
             return;
           }
           const [pkColumns, allColumns] = await Promise.all([
@@ -143,33 +166,31 @@ export function openTablePanel(
             client.describeTable(database, table),
           ]);
           if (!pkColumns || pkColumns.length === 0) {
-            sendError('该表没有主键，无法编辑');
+            sendError(t('noPrimaryKeyEdit'));
             return;
           }
           const colInfo = allColumns.find(c => c.field === column);
           if (!colInfo) {
-            sendError(`列不存在：${column}`);
+            sendError(t('columnNotFound', { column }));
             return;
           }
           const setSql = `UPDATE ${qualifiedTable(database, table)} SET \`${column.replace(/`/g, '``')}\` = ? ${whereSql(pkColumns)}`;
           await client.query(setSql, [toParam(newValue), ...pkValues]);
-          await sendPage(msg.payload.page ?? 1);
+          await sendPage(msg.payload.page ?? 1, currentQuery);
           return;
         }
         case 'deleteRow': {
           const { pkValues, page } = msg.payload;
           const pkColumns = await client.getPrimaryKey(database, table);
           if (!pkColumns || pkColumns.length === 0) {
-            sendError('该表没有主键，无法删除');
+            sendError(t('noPrimaryKeyDelete'));
             return;
           }
           await client.query(
             `DELETE FROM ${qualifiedTable(database, table)} ${whereSql(pkColumns)}`,
             pkValues,
           );
-          const total = await client.count(database, table);
-          const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
-          await sendPage(Math.min(page ?? 1, maxPage));
+          await sendPage(page ?? 1, currentQuery);
           return;
         }
         case 'addRow': {
@@ -183,18 +204,18 @@ export function openTablePanel(
             `INSERT INTO ${qualifiedTable(database, table)} (${names}) VALUES (${placeholders})`,
             params,
           );
-          await sendPage(page ?? 1);
+          await sendPage(page ?? 1, currentQuery);
           return;
         }
         case 'editCell': {
-          // 右键"编辑"：用 VSCode 真实编辑器打开单元格，保存时写回本地暂存
+          // 右键"编辑"：用 VSCode 真实编辑器打开单元格，自动保存时写回本地暂存
           const { rowKey, field, value, pkValues } = msg.payload;
           if (!rowKey || !field) {
-            sendError('缺少单元格定位信息');
+            sendError(t('missingCellLocator'));
             return;
           }
           await vscode.commands.executeCommand('connectToolbox.editCell', {
-            title: `${database}.${table} › ${field}`,
+            title: `${database}.${table}_${field}`,
             value: value ?? '',
             language: detectLanguage(value ?? ''),
             onSave: (newValue: string) => {
@@ -210,14 +231,14 @@ export function openTablePanel(
         case 'commit': {
           const { commit, page } = msg.payload;
           if (!commit) {
-            sendError('缺少提交数据');
+            sendError(t('missingCommitData'));
             return;
           }
           try {
             const columns = await client.describeTable(database, table);
             const { affected } = await client.commitChanges(database, table, commit, columns);
-            panel.webview.postMessage({ type: 'commitResult', ok: true, message: `提交成功，影响 ${affected} 行` });
-            await sendPage(page ?? 1);
+            panel.webview.postMessage({ type: 'commitResult', ok: true, message: t('commitSuccessRows', { count: affected }) });
+            await sendPage(page ?? 1, currentQuery);
           } catch (err) {
             panel.webview.postMessage({ type: 'commitResult', ok: false, message: (err as Error).message });
           }
@@ -244,7 +265,7 @@ function getPanelHtml(
   const isDev = !!process.env.CT_WEBVIEW_DEV;
   if (isDev) {
     return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${locale()}">
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' http://localhost:5173; script-src http://localhost:5173 'unsafe-inline'; connect-src http://localhost:5173 ws://localhost:5173; img-src http://localhost:5173 data:; font-src http://localhost:5173;">
@@ -259,7 +280,8 @@ window.$RefreshReg$ = () => {}
 window.$RefreshSig$ = () => (type) => type
 window.__vite_plugin_react_preamble_installed__ = true
 </script>
-<script type="module" src="${DEV_SERVER}/src/main.tsx?panel=table&db=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}"></script>
+<script>window.__connectToolboxLocale = ${JSON.stringify(locale())};</script>
+<script type="module" src="${DEV_SERVER}/src/main.tsx?panel=table&db=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}&lang=${encodeURIComponent(locale())}"></script>
 </body>
 </html>`;
   }
@@ -271,7 +293,7 @@ window.__vite_plugin_react_preamble_installed__ = true
   try {
     html = fs.readFileSync(htmlPath, 'utf8');
   } catch {
-    return `<html><body style="color:var(--vscode-errorForeground);padding:16px">前端资源未构建，请先运行 <code>npm run build:webview</code></body></html>`;
+    return `<html lang="${locale()}"><body style="color:var(--vscode-errorForeground);padding:16px">${t('frontendNotBuilt')}</body></html>`;
   }
 
   const csp = [
@@ -293,7 +315,7 @@ window.__vite_plugin_react_preamble_installed__ = true
   // 注入 panel 参数到入口脚本
   html = html.replace(
     /<script type="module"[^>]*src="([^"]+)"[^>]*><\/script>/,
-    (m, src: string) => `<script type="module" src="${src}?panel=table&db=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}"></script>`,
+    (m, src: string) => `<script>window.__connectToolboxLocale = ${JSON.stringify(locale())};</script>\n<script type="module" src="${src}?panel=table&db=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}&lang=${encodeURIComponent(locale())}"></script>`,
   );
 
   return html

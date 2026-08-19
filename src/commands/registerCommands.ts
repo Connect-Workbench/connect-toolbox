@@ -11,6 +11,7 @@ import { openTablePanel } from '../webviews/tablePanel';
 import { runFilter } from './filterCommands';
 import { showDdl } from '../providers/ddlProvider';
 import { rememberPanel } from './panelRegistry';
+import { t } from '../i18n';
 
 export function registerCommands(
   context: vscode.ExtensionContext,
@@ -31,11 +32,11 @@ export function registerCommands(
     }
     await store.save(config);
     tree.refresh();
-    vscode.window.showInformationMessage(`已添加连接「${config.name}」`);
+    vscode.window.showInformationMessage(t('connectionAdded', { name: config.name }));
   });
 
   register('editConnection', async (node?: ConnectionNode) => {
-    const config = node ? node.config : await pickConnection(store, '选择要编辑的连接');
+    const config = node ? node.config : await pickConnection(store, t('chooseEditConnection'));
     if (!config) {
       return;
     }
@@ -46,20 +47,20 @@ export function registerCommands(
     await manager.disconnect(config.id);
     await store.save(updated);
     tree.refresh();
-    vscode.window.showInformationMessage(`已更新连接「${updated.name}」`);
+    vscode.window.showInformationMessage(t('connectionUpdated', { name: updated.name }));
   });
 
   register('removeConnection', async (node?: ConnectionNode) => {
-    const config = node ? node.config : await pickConnection(store, '选择要删除的连接');
+    const config = node ? node.config : await pickConnection(store, t('chooseDeleteConnection'));
     if (!config) {
       return;
     }
     const answer = await vscode.window.showWarningMessage(
-      `确定删除连接「${config.name}」？`,
+      t('deleteConnectionConfirm', { name: config.name }),
       { modal: true },
-      '删除',
+      t('delete'),
     );
-    if (answer !== '删除') {
+    if (answer !== t('delete')) {
       return;
     }
     await manager.disconnect(config.id);
@@ -74,22 +75,22 @@ export function registerCommands(
   });
 
   register('connect', async (node?: ConnectionNode) => {
-    const config = node ? node.config : await pickConnection(store, '选择要连接的实例');
+    const config = node ? node.config : await pickConnection(store, t('chooseConnectInstance'));
     if (!config) {
       return;
     }
     try {
       await manager.connect(config.id);
       tree.refresh();
-      vscode.window.showInformationMessage(`已连接：${config.name}`);
+      vscode.window.showInformationMessage(t('connected', { name: config.name }));
     } catch (err) {
-      vscode.window.showErrorMessage(`连接失败：${(err as Error).message}`);
+      vscode.window.showErrorMessage(t('connectionFailed', { message: (err as Error).message }));
       tree.refresh();
     }
   });
 
   register('disconnect', async (node?: ConnectionNode) => {
-    const config = node ? node.config : await pickConnection(store, '选择要断开的连接');
+    const config = node ? node.config : await pickConnection(store, t('chooseDisconnectConnection'));
     if (!config) {
       return;
     }
@@ -101,7 +102,7 @@ export function registerCommands(
     const config =
       node && node.config.type === 'ssh'
         ? node.config
-        : await pickConnection(store, '选择 SSH 连接', c => c.type === 'ssh');
+        : await pickConnection(store, t('chooseSshConnection'), c => c.type === 'ssh');
     if (!config) {
       return;
     }
@@ -118,12 +119,12 @@ export function registerCommands(
     const config =
       node && node.config.type === 'mysql'
         ? node.config
-        : await pickConnection(store, '选择 MySQL 连接', c => c.type === 'mysql');
+        : await pickConnection(store, t('chooseMysqlConnection'), c => c.type === 'mysql');
     if (!config) {
       return;
     }
     if (manager.getStatus(config.id) !== 'connected') {
-      vscode.window.showWarningMessage('MySQL 尚未连接，请先在连接树中连接');
+      vscode.window.showWarningMessage(t('mysqlNotConnected'));
       return;
     }
     void rememberPanel(store, { type: 'query', connId: config.id, connName: config.name });
@@ -139,7 +140,7 @@ export function registerCommands(
       return;
     }
     if (manager.getStatus(node.connectionId) !== 'connected') {
-      vscode.window.showWarningMessage('MySQL 尚未连接，请先在连接树中连接');
+      vscode.window.showWarningMessage(t('mysqlNotConnected'));
       return;
     }
     void rememberPanel(store, {
@@ -162,14 +163,14 @@ export function registerCommands(
     }
     const client = manager.getMySqlClient(node.connectionId);
     if (!client) {
-      vscode.window.showWarningMessage('MySQL 尚未连接，请先在连接树中连接');
+      vscode.window.showWarningMessage(t('mysqlNotConnected'));
       return;
     }
     try {
       const ddl = await client.showCreateTable(node.database, node.table);
       await showDdl(`${node.database}.${node.table}`, ddl + ';\n');
     } catch (err) {
-      vscode.window.showErrorMessage(`获取建表语句失败：${(err as Error).message}`);
+      vscode.window.showErrorMessage(t('showCreateTableFailed', { message: (err as Error).message }));
     }
   });
 }
@@ -183,7 +184,7 @@ async function pickConnection(
 ): Promise<ConnectionConfig | undefined> {
   const list = store.list().filter(filter ?? (() => true));
   if (list.length === 0) {
-    vscode.window.showInformationMessage('暂无可用连接，请先新建连接');
+    vscode.window.showInformationMessage(t('noAvailableConnections'));
     return undefined;
   }
   const picked = await vscode.window.showQuickPick(

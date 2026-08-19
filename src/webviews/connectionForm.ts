@@ -4,6 +4,7 @@ import mysql from 'mysql2/promise';
 import { ConnectionConfig, ConnectionType } from '../connection/types';
 import { ConnectionStore } from '../connection/ConnectionStore';
 import { SshSession } from '../ssh/SshSession';
+import { locale, t } from '../i18n';
 
 interface FormInitPayload {
   config?: ConnectionConfig;
@@ -42,7 +43,7 @@ export function showConnectionForm(
   return new Promise(resolve => {
     const panel = vscode.window.createWebviewPanel(
       'connectToolbox.connectionForm',
-      existing ? `编辑连接：${existing.name}` : '新建连接',
+      existing ? t('connectionFormEditTitle', { name: existing.name }) : t('connectionFormNewTitle'),
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -132,7 +133,7 @@ async function buildConfig(
         passwordRef = existing?.passwordRef ?? `password.${crypto.randomUUID()}`;
         await store.setSecret(passwordRef, p.password);
       } else if (!passwordRef) {
-        throw new Error('密码认证方式需要填写密码');
+        throw new Error(t('passwordRequired'));
       }
     }
   } else {
@@ -173,7 +174,7 @@ async function testConnection(
   p: FormSavePayload,
 ): Promise<{ ok: boolean; message: string }> {
   if (!p.host.trim() || !p.port) {
-    return { ok: false, message: '请先填写主机和端口' };
+    return { ok: false, message: t('fillHostPort') };
   }
 
   const passwordOverride = p.password || undefined;
@@ -181,7 +182,7 @@ async function testConnection(
 
   if (p.type === 'ssh') {
     if (!p.username.trim()) {
-      return { ok: false, message: 'SSH 需要用户名' };
+      return { ok: false, message: t('sshNeedsUsername') };
     }
     const tempConfig: ConnectionConfig = {
       id: 'test',
@@ -201,7 +202,7 @@ async function testConnection(
     });
     await session.connect();
     session.disconnect();
-    return { ok: true, message: 'SSH 连接成功' };
+    return { ok: true, message: t('sshConnectionSuccess') };
   }
 
   if (p.type === 'mysql') {
@@ -212,11 +213,11 @@ async function testConnection(
     try {
       if (p.viaSsh) {
         if (!p.sshConnectionId) {
-          return { ok: false, message: '请选择隧道使用的 SSH 连接' };
+          return { ok: false, message: t('selectTunnelConnection') };
         }
         const sshConfig = store.get(p.sshConnectionId);
         if (!sshConfig) {
-          return { ok: false, message: '隧道引用的 SSH 连接不存在' };
+          return { ok: false, message: t('tunnelConnectionMissing') };
         }
         session = new SshSession(sshConfig, ref => store.getSecret(ref));
         await session.connect();
@@ -237,7 +238,7 @@ async function testConnection(
       });
       await conn.query('SELECT 1');
       await conn.end();
-      return { ok: true, message: 'MySQL 连接成功' };
+      return { ok: true, message: t('mysqlConnectionSuccess') };
     } finally {
       if (tunnel) {
         await tunnel.close();
@@ -246,7 +247,7 @@ async function testConnection(
     }
   }
 
-  return { ok: false, message: 'Redis 连接测试将在 M3 版本支持' };
+  return { ok: false, message: t('redisTestUnsupported') };
 }
 
 function renderHtml(webview: vscode.Webview): string {
@@ -258,7 +259,7 @@ function renderHtml(webview: vscode.Webview): string {
   ].join('; ');
 
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${locale()}">
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -332,7 +333,7 @@ function renderHtml(webview: vscode.Webview): string {
 <body>
 <div class="form">
   <div class="row" id="typeRow">
-    <label>连接类型</label>
+    <label>${t('connectionType')}</label>
     <div class="seg" id="typeSeg">
       <label><input type="radio" name="type" value="ssh">SSH</label>
       <label><input type="radio" name="type" value="mysql">MySQL</label>
@@ -340,41 +341,41 @@ function renderHtml(webview: vscode.Webview): string {
     </div>
   </div>
 
-  <div class="row"><label>名称 *</label><input type="text" id="name"><div class="field-error" data-for="name">请输入连接名称</div></div>
+  <div class="row"><label>${t('name')}</label><input type="text" id="name"><div class="field-error" data-for="name">${t('enterConnectionName')}</div></div>
 
   <div class="inline">
-    <div class="row"><label>主机 *</label><input type="text" id="host"><div class="field-error" data-for="host">请输入主机地址</div></div>
-    <div class="row" style="flex:0 0 110px"><label>端口 *</label><input type="text" id="port"><div class="field-error" data-for="port">1-65535 的数字</div></div>
+    <div class="row"><label>${t('hostRequired')}</label><input type="text" id="host"><div class="field-error" data-for="host">${t('enterHost')}</div></div>
+    <div class="row" style="flex:0 0 110px"><label>${t('portRequired')}</label><input type="text" id="port"><div class="field-error" data-for="port">${t('portRange')}</div></div>
   </div>
 
-  <div class="row"><label id="usernameLabel">用户名</label><input type="text" id="username"><div class="field-error" data-for="username">SSH 连接需要用户名</div></div>
+  <div class="row"><label id="usernameLabel">${t('username')}</label><input type="text" id="username"><div class="field-error" data-for="username">${t('sshUsernameRequired')}</div></div>
 
   <!-- SSH 认证区 -->
   <div class="section" id="authSection">
-    <div class="section-title">SSH 认证方式</div>
+    <div class="section-title">${t('sshAuthMethod')}</div>
     <div class="seg" id="authSeg">
-      <label><input type="radio" name="auth" value="password">密码</label>
-      <label><input type="radio" name="auth" value="privateKey">私钥</label>
+      <label><input type="radio" name="auth" value="password">${t('password')}</label>
+      <label><input type="radio" name="auth" value="privateKey">${t('privateKey')}</label>
     </div>
     <div class="row" id="passwordRow" style="margin-top:12px">
-      <label>密码 *</label>
+      <label>${t('password')} *</label>
       <div class="pwd-wrap">
         <input type="password" id="sshPassword">
-        <button class="eye" id="sshPasswordEye" title="显示/隐藏">显示</button>
+        <button class="eye" id="sshPasswordEye" title="${t('show')}/${t('hide')}">${t('show')}</button>
       </div>
       <div class="hint" id="sshPasswordHint"></div>
-      <div class="field-error" data-for="sshPassword">密码认证需要填写密码</div>
+      <div class="field-error" data-for="sshPassword">${t('passwordRequired')}</div>
     </div>
     <div class="row hidden" id="keyPathRow" style="margin-top:12px">
-      <label>私钥路径 *</label>
+      <label>${t('privateKeyPath')}</label>
       <input type="text" id="privateKeyPath" placeholder="~/.ssh/id_rsa">
-      <div class="field-error" data-for="privateKeyPath">请输入私钥路径</div>
+      <div class="field-error" data-for="privateKeyPath">${t('enterPrivateKeyPath')}</div>
     </div>
     <div class="row hidden" id="passphraseRow">
-      <label>私钥口令（可留空）</label>
+      <label>${t('passphrase')}</label>
       <div class="pwd-wrap">
         <input type="password" id="passphrase">
-        <button class="eye" id="passphraseEye" title="显示/隐藏">显示</button>
+        <button class="eye" id="passphraseEye" title="${t('show')}/${t('hide')}">${t('show')}</button>
       </div>
       <div class="hint" id="passphraseHint"></div>
     </div>
@@ -382,35 +383,35 @@ function renderHtml(webview: vscode.Webview): string {
 
   <!-- MySQL / Redis 连接方式 -->
   <div class="section" id="connSection">
-    <div class="section-title">连接方式</div>
+    <div class="section-title">${t('connectionMethod')}</div>
     <div class="seg" id="connSeg">
-      <label><input type="radio" name="conn" value="direct">直连</label>
-      <label><input type="radio" name="conn" value="tunnel">SSH 隧道</label>
+      <label><input type="radio" name="conn" value="direct">${t('direct')}</label>
+      <label><input type="radio" name="conn" value="tunnel">${t('sshTunnelOption')}</label>
     </div>
     <div class="row hidden" id="sshSelectRow" style="margin-top:12px">
-      <label>SSH 连接 *</label>
+      <label>${t('sshConnectionRequired')}</label>
       <select id="sshSelect"></select>
-      <div class="field-error" data-for="sshSelect">请选择隧道使用的 SSH 连接</div>
+      <div class="field-error" data-for="sshSelect">${t('selectSshTunnel')}</div>
     </div>
     <div class="row" id="dbPasswordRow" style="margin-top:12px">
-      <label>密码（可留空）</label>
+      <label>${t('databasePasswordOptional')}</label>
       <div class="pwd-wrap">
         <input type="password" id="dbPassword">
-        <button class="eye" id="dbPasswordEye" title="显示/隐藏">显示</button>
+        <button class="eye" id="dbPasswordEye" title="${t('show')}/${t('hide')}">${t('show')}</button>
       </div>
       <div class="hint" id="dbPasswordHint"></div>
     </div>
   </div>
 
-  <div class="row"><label>分组（可留空，默认「默认分组」）</label><input type="text" id="group"></div>
+  <div class="row"><label>${t('groupOptional')}</label><input type="text" id="group"></div>
 
   <div id="globalError"></div>
   <div id="testStatus"></div>
   <div class="footer">
-    <button class="secondary" id="testBtn">测试连接</button>
+    <button class="secondary" id="testBtn">${t('testConnection')}</button>
     <span style="flex:1"></span>
-    <button class="secondary" id="cancelBtn">取消</button>
-    <button id="saveBtn">保存</button>
+    <button class="secondary" id="cancelBtn">${t('cancel')}</button>
+    <button id="saveBtn">${t('save')}</button>
   </div>
 </div>
 
@@ -446,7 +447,7 @@ function renderHtml(webview: vscode.Webview): string {
   function runTest() {
     showGlobal('');
     if (!validate()) { return; }
-    showTest('正在测试连接…', 'testing');
+    showTest('${t('testingConnection')}', 'testing');
     vscode.postMessage({ type: 'test', payload: payload() });
   }
 
@@ -466,7 +467,7 @@ function renderHtml(webview: vscode.Webview): string {
     $('passwordRow').classList.toggle('hidden', isSsh && useKey);
     $('keyPathRow').classList.toggle('hidden', isSsh && !useKey);
     $('passphraseRow').classList.toggle('hidden', isSsh && !useKey);
-    $('usernameLabel').textContent = isSsh ? '用户名 *' : '用户名（可留空）';
+    $('usernameLabel').textContent = isSsh ? '${t('username')} *' : '${t('usernameOptional')}';
 
     var conn = document.querySelector('input[name=conn]:checked');
     var viaTunnel = conn && conn.value === 'tunnel';
@@ -481,8 +482,8 @@ function renderHtml(webview: vscode.Webview): string {
   function toggleEye(inputId, eyeId) {
     var input = $(inputId);
     var eye = $(eyeId);
-    if (input.type === 'password') { input.type = 'text'; eye.textContent = '隐藏'; }
-    else { input.type = 'password'; eye.textContent = '显示'; }
+    if (input.type === 'password') { input.type = 'text'; eye.textContent = '${t('hide')}'; }
+    else { input.type = 'password'; eye.textContent = '${t('show')}'; }
   }
 
   function validate() {
@@ -556,9 +557,9 @@ function renderHtml(webview: vscode.Webview): string {
       var auth = !c || !c.privateKeyPath ? 'password' : 'privateKey';
       document.querySelector('input[name=auth][value="' + auth + '"]').checked = true;
       $('privateKeyPath').value = c && c.privateKeyPath ? c.privateKeyPath : '';
-      $('sshPasswordHint').textContent = state.hasPassword ? '已保存密码，留空则保持不变' : '';
-      $('passphraseHint').textContent = state.hasPassphrase ? '已保存口令，留空则保持不变' : '';
-      $('dbPasswordHint').textContent = state.hasPassword ? '已保存密码，留空则保持不变' : '';
+      $('sshPasswordHint').textContent = state.hasPassword ? '${t('savedSecretHint')}' : '';
+      $('passphraseHint').textContent = state.hasPassphrase ? '${t('savedSecretHint')}' : '';
+      $('dbPasswordHint').textContent = state.hasPassword ? '${t('savedSecretHint')}' : '';
 
       var connMode = c && c.viaSsh ? 'tunnel' : 'direct';
       document.querySelector('input[name=conn][value="' + connMode + '"]').checked = true;
@@ -575,7 +576,7 @@ function renderHtml(webview: vscode.Webview): string {
       showGlobal(msg.message);
     } else if (msg.type === 'testResult') {
       if (msg.testing) {
-        showTest('正在测试连接…', 'testing');
+        showTest('${t('testingConnection')}', 'testing');
       } else if (msg.ok) {
         showTest('✓ ' + msg.message, 'ok');
       } else {

@@ -1,5 +1,6 @@
 import React from 'react';
 import TablePanel from './panels/tablePanel';
+import { t } from './i18n';
 
 /**
  * 面板入口：当前启动的 webview 面板类型由主进程通过 URL 参数指定。
@@ -12,6 +13,6 @@ export default function App(): React.JSX.Element {
     case 'table':
       return <TablePanel />;
     default:
-      return <div>未知面板: {panel}</div>;
+      return <div>{t('unknownPanel', { panel })}</div>;
   }
 }

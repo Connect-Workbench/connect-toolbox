@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionConfig } from '../connection/types';
 import { ConnectionManager } from '../connection/ConnectionManager';
 import { QueryResult } from '../clients/MySqlClient';
+import { locale, t } from '../i18n';
 
 interface ExecuteMessage {
   type: 'execute';
@@ -18,7 +19,7 @@ export function openQueryPanel(
 ): void {
   const panel = vscode.window.createWebviewPanel(
     `connectToolbox.query.${config.id}`,
-    `查询：${config.name}`,
+    t('queryPanelTitle', { name: config.name }),
     vscode.ViewColumn.Active,
     {
       enableScripts: true,
@@ -35,7 +36,7 @@ export function openQueryPanel(
     }
     const client = manager.getMySqlClient(config.id);
     if (!client) {
-      panel.webview.postMessage({ type: 'error', message: 'MySQL 未连接，请先在连接树中连接' });
+      panel.webview.postMessage({ type: 'error', message: t('mysqlNotConnected') });
       return;
     }
     try {
@@ -55,7 +56,7 @@ function renderHtml(webview: vscode.Webview): string {
   ].join('; ');
 
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${locale()}">
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -102,11 +103,11 @@ function renderHtml(webview: vscode.Webview): string {
 </head>
 <body>
 <div class="editor-bar">
-  <textarea id="sqlEditor" placeholder="输入 SQL 语句，例如：SELECT * FROM \`库名\`.\`表名\` LIMIT 100" spellcheck="false"></textarea>
-  <div class="sql-hint">快捷键：Cmd/Ctrl + Enter 执行</div>
+  <textarea id="sqlEditor" placeholder="${t('querySqlPlaceholder')}" spellcheck="false"></textarea>
+  <div class="sql-hint">${t('queryShortcutHint')}</div>
 </div>
 <div class="toolbar">
-  <button id="runBtn">执行</button>
+  <button id="runBtn">${t('execute')}</button>
   <span class="status" id="status"></span>
 </div>
 <div class="results" id="results"></div>
@@ -117,6 +118,9 @@ function renderHtml(webview: vscode.Webview): string {
   var $ = function (id) { return document.getElementById(id); };
   var results = [];   // 多结果集
   var activeTab = 0;
+  var resultTabTemplate = ${JSON.stringify(t('resultTab'))};
+  var resultRowsTemplate = ${JSON.stringify(t('resultRows'))};
+  var resultAffectedTemplate = ${JSON.stringify(t('resultAffected'))};
 
   function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -135,26 +139,26 @@ function renderHtml(webview: vscode.Webview): string {
   function renderResults() {
     var box = $('results');
     if (results.length === 0) {
-      box.innerHTML = '<div class="empty">执行 SQL 后结果将显示在这里</div>';
+      box.innerHTML = '<div class="empty">${t('queryEmpty')}</div>';
       return;
     }
     var html = '<div class="tabs">';
     results.forEach(function (r, i) {
-      html += '<div class="tab' + (i === activeTab ? ' active' : '') + '" data-idx="' + i + '">结果 ' + (i + 1) + '</div>';
+      html += '<div class="tab' + (i === activeTab ? ' active' : '') + '" data-idx="' + i + '">' + resultTabTemplate.replace('{index}', String(i + 1)) + '</div>';
     });
     html += '</div>';
 
     var r = results[activeTab];
     var meta = '';
     if (r.columns.length > 0) {
-      meta = '返回 ' + r.rows.length + ' 行 · 耗时 ' + r.durationMs + ' ms';
+      meta = resultRowsTemplate.replace('{count}', String(r.rows.length)).replace('{duration}', String(r.durationMs));
     } else {
-      meta = '影响 ' + (r.affectedRows !== undefined ? r.affectedRows : 0) + ' 行 · 耗时 ' + r.durationMs + ' ms';
+      meta = resultAffectedTemplate.replace('{count}', String(r.affectedRows !== undefined ? r.affectedRows : 0)).replace('{duration}', String(r.durationMs));
     }
     html += '<div class="result-meta">' + escapeHtml(meta) + '</div>';
 
     if (r.columns.length === 0) {
-      html += '<div class="empty">执行成功</div>';
+      html += '<div class="empty">${t('executeSuccess')}</div>';
     } else {
       html += '<div class="table-wrap"><table><thead><tr>';
       r.columns.forEach(function (c) { html += '<th>' + escapeHtml(c) + '</th>'; });
@@ -184,8 +188,8 @@ function renderHtml(webview: vscode.Webview): string {
 
   function run() {
     var sql = $('sqlEditor').value.trim();
-    if (!sql) { setStatus('请输入 SQL 语句', true); return; }
-    setStatus('执行中…');
+    if (!sql) { setStatus('${t('enterSql')}', true); return; }
+    setStatus('${t('executing')}');
     vscode.postMessage({ type: 'execute', payload: { sql: sql } });
   }
 
