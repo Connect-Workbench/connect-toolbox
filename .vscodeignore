@@ -20,3 +20,9 @@ esbuild.mjs
 .gitignore
 .git/**
 **/*.vsix
+resources/branding/connect-workbench-logo-concepts.png
+resources/branding/connect-workbench-logo-master.png
+resources/branding/connect-workbench-github-avatar.png
+resources/branding/connect-workbench-logo-transparent.png
+resources/branding/connect-workbench-transparent-128.png
+resources/branding/connect-workbench-transparent-512.png
