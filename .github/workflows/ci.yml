@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            webview/package-lock.json
+
+      - name: Install extension dependencies
+        run: npm ci
+
+      - name: Install Webview dependencies
+        run: npm ci
+        working-directory: webview
+
+      - name: Typecheck Extension Host
+        run: npm run typecheck
+
+      - name: Typecheck Webview
+        run: npm run typecheck:webview
+
+      - name: Build extension and Webview
+        run: npm run build
