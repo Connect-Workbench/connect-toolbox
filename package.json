@@ -2,7 +2,7 @@
   "name": "connect-toolbox",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "connect-workbench",
   "license": "MIT",
   "icon": "resources/branding/connect-workbench-extension-icon.png",

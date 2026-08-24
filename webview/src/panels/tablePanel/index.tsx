@@ -93,10 +93,33 @@ const resizeThStyle = `
   }
   .ct-th-resizable:hover::after { background: var(--vscode-focusBorder); width: 4px; }
   .ant-table-cell { min-width: 0 !important; max-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+  .ct-cell-editor.ant-input,
+  .ct-cell-editor.ant-input:hover,
+  .ct-cell-editor.ant-input:focus {
+    width: 100%;
+    min-height: 22px;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    outline: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: inherit !important;
+    font-family: monospace;
+  }
   .ct-row-deleted { opacity: .45; text-decoration: line-through; }
-  .ct-row-deleted td { background: rgba(255, 90, 90, .16) !important; }
-  .ct-row-new td { background: rgba(255, 200, 60, .14) !important; }
-  .ct-cell-modified { background: rgba(100, 180, 255, .18) !important; }
+  .ct-row-deleted td {
+    background: var(--vscode-editor-background) !important;
+    background: color-mix(in srgb, var(--vscode-editor-background) 84%, #ff5a5a) !important;
+  }
+  .ct-row-new td {
+    background: var(--vscode-editor-background) !important;
+    background: color-mix(in srgb, var(--vscode-editor-background) 86%, #ffc83c) !important;
+  }
+  .ct-cell-modified {
+    background: var(--vscode-editor-background) !important;
+    background: color-mix(in srgb, var(--vscode-editor-background) 82%, #64b4ff) !important;
+  }
   .ct-row-number-header, .ct-row-number-cell {
     color: var(--vscode-descriptionForeground);
     background: var(--vscode-editorGroupHeader-tabsBackground) !important;
@@ -104,27 +127,64 @@ const resizeThStyle = `
   }
   .ct-row-number-cell { text-align: right; }
   .ct-sticky-header { position: sticky !important; z-index: 4 !important; }
-  .ct-sticky-body { position: sticky !important; z-index: 2 !important; }
+  .ct-sticky-body {
+    position: sticky !important;
+    z-index: 3 !important;
+    background: var(--vscode-editor-background, #1e1e1e) !important;
+    background-color: var(--vscode-editor-background, #1e1e1e) !important;
+    background-image: none !important;
+    background-clip: padding-box;
+    box-shadow: inset -1px 0 var(--vscode-panel-border);
+  }
+  .ct-sticky-body.ct-sticky-status-deleted {
+    box-shadow: inset 3px 0 #ff5a5a, inset -1px 0 var(--vscode-panel-border);
+  }
+  .ct-sticky-body.ct-sticky-status-new {
+    box-shadow: inset 3px 0 #ffc83c, inset -1px 0 var(--vscode-panel-border);
+  }
+  .ct-sticky-body.ct-sticky-status-modified {
+    box-shadow: inset 3px 0 #64b4ff, inset -1px 0 var(--vscode-panel-border);
+  }
+  .ct-cell-selected,
+  td[data-selection-cell-selected="true"],
+  .ct-row-selected > td,
+  tr[data-selection-row-selected="true"] > td,
+  .ant-table-tbody > tr > td:has(.ct-cell-editor) {
+    background: var(--vscode-editor-background, #1e1e1e) !important;
+    background-color: var(--vscode-editor-background, #1e1e1e) !important;
+    background-image: linear-gradient(
+      var(--vscode-editor-selectionBackground, #264f78),
+      var(--vscode-editor-selectionBackground, #264f78)
+    ) !important;
+    color: var(--vscode-editor-selectionForeground, var(--vscode-editor-foreground)) !important;
+  }
+  .ant-table-tbody > tr > td.ct-sticky-body.ct-cell-selected,
+  .ant-table-tbody > tr > td[data-selection-cell-selected="true"],
+  .ct-row-selected > td.ct-sticky-body,
+  tr[data-selection-row-selected="true"] > td.ct-sticky-body,
+  .ant-table-tbody > tr > td.ct-sticky-body:has(.ct-cell-editor) {
+    box-shadow: inset -1px 0 var(--vscode-panel-border) !important;
+  }
 `;
 
-/** 正在编辑的单元格 */
-interface EditingCell {
-  key: string;
-  field: string;
-}
+type SelectionTarget =
+  | { kind: 'cell'; key: string; field: string }
+  | { kind: 'row'; key: string };
 
 /**
  * 内联编辑输入框（双击单元格快速编辑）
  * - ref + useEffect 手动聚焦：webview 中 autoFocus 不可靠，会导致输入框出现但光标未进入
  * - onBlur 直接保存（不做延迟）
  */
-function EditInput({ value, onChange, onSave, onCancel }: {
+function EditInput({ value, onSave, onCancel }: {
   value: string;
-  onChange: (v: string) => void;
-  onSave: () => void;
+  onSave: (value: string) => void;
   onCancel: () => void;
 }): React.JSX.Element {
   const ref = React.useRef<React.ElementRef<typeof Input> | null>(null);
+  const draftRef = React.useRef(value);
+  const [draft, setDraft] = React.useState(value);
+  const finishedRef = React.useRef(false);
   React.useEffect(() => {
     const el = ref.current;
     if (el) {
@@ -132,18 +192,32 @@ function EditInput({ value, onChange, onSave, onCancel }: {
       el.select?.();
     }
   }, []);
+  const save = React.useCallback(() => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    onSave(draftRef.current);
+  }, [onSave]);
+  const cancel = React.useCallback(() => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    onCancel();
+  }, [onCancel]);
   return (
     <Input
       ref={ref}
+      className="ct-cell-editor"
       size="small"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      onPressEnter={onSave}
-      onBlur={onSave}
+      value={draft}
+      onChange={(e) => {
+        draftRef.current = e.target.value;
+        setDraft(e.target.value);
+      }}
+      onPressEnter={save}
+      onBlur={save}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation();
-          onCancel();
+          cancel();
         }
       }}
     />
@@ -151,23 +225,54 @@ function EditInput({ value, onChange, onSave, onCancel }: {
 }
 
 /**
- * 单元格内容（memo 隔离）：双击进入编辑时只有目标单元格重渲染，
- * 避免整个 Table 的所有单元格重新调和导致的编辑延迟
+ * 单元格内容（memo 隔离）：编辑态只更新当前 Cell，不触发 TablePanel 重渲染。
  */
-const CellContent = React.memo(function CellContent({ value, editing, editingValue, onChange, onSave, onCancel }: {
+const CellContent = React.memo(function CellContent({
+  value,
+  rowKey,
+  field,
+  canEdit,
+  resetToken,
+  onEditStart,
+  onSave,
+}: {
   value: CellValue;
-  editing: boolean;
-  editingValue: string;
-  onChange: (v: string) => void;
-  onSave: () => void;
-  onCancel: () => void;
+  rowKey: string;
+  field: string;
+  canEdit: boolean;
+  resetToken: PagePayload | null;
+  onEditStart: () => void;
+  onSave: (key: string, field: string, value: string) => void;
 }): React.JSX.Element {
+  const [editing, setEditing] = React.useState(false);
+
+  React.useEffect(() => {
+    setEditing(false);
+  }, [resetToken, value]);
+
+  const enterEdit = (event: React.MouseEvent) => {
+    if (!canEdit) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onEditStart();
+    setEditing(true);
+  };
+
+  const save = React.useCallback((nextValue: string) => {
+    setEditing(false);
+    onSave(rowKey, field, nextValue);
+  }, [field, onSave, rowKey]);
+
+  const cancel = React.useCallback(() => setEditing(false), []);
+
   if (editing) {
-    return <EditInput value={editingValue} onChange={onChange} onSave={onSave} onCancel={onCancel} />;
+    return <EditInput value={editValue(value)} onSave={save} onCancel={cancel} />;
   }
   return (
     <span
+      onDoubleClick={enterEdit}
       style={{
+        display: 'block',
         color: value === null ? 'var(--vscode-descriptionForeground)' : undefined,
         fontStyle: value === null ? 'italic' : undefined,
         fontFamily: 'monospace',
@@ -175,6 +280,45 @@ const CellContent = React.memo(function CellContent({ value, editing, editingVal
     >
       {cellText(value)}
     </span>
+  );
+});
+
+const getTableRowProps = (row: LocalRow) => ({
+  className: [
+    row.__status === 'deleted' ? 'ct-row-deleted' : '',
+    row.__status === 'new' ? 'ct-row-new' : '',
+    row.__status === 'modified' ? 'ct-row-modified' : '',
+  ].filter(Boolean).join(' ') || undefined,
+});
+
+/** 表格区域与右键菜单状态隔离，菜单打开时跳过整张 Table 的重新处理。 */
+const TableSurface = React.memo(function TableSurface({
+  columns,
+  rows,
+  loading,
+  scrollX,
+  tableBodyHeight,
+}: {
+  columns: ColumnsType<LocalRow>;
+  rows: LocalRow[];
+  loading: boolean;
+  scrollX: number;
+  tableBodyHeight: number;
+}): React.JSX.Element {
+  const scroll = React.useMemo(() => ({ x: scrollX, y: tableBodyHeight }), [scrollX, tableBodyHeight]);
+  return (
+    <Table
+      rowKey="__key"
+      columns={columns}
+      dataSource={rows}
+      size="small"
+      loading={loading}
+      pagination={false}
+      bordered
+      tableLayout="fixed"
+      scroll={scroll}
+      onRow={getTableRowProps}
+    />
   );
 });
 
@@ -212,8 +356,6 @@ export default function TablePanel(): React.JSX.Element {
   const [drafts, setDrafts] = React.useState<LocalRow[]>([]);
   const [edits, setEdits] = React.useState<Record<string, { changes: Record<string, string>; pkValues: string[] }>>({});
   const [deletes, setDeletes] = React.useState<Record<string, string[]>>({});
-  const [editing, setEditing] = React.useState<EditingCell | null>(null);
-  const [editingValue, setEditingValue] = React.useState('');
   const [ctxMenu, setCtxMenu] = React.useState<CtxMenu | null>(null);
   const [headerMenu, setHeaderMenu] = React.useState<HeaderMenu | null>(null);
   const [sort, setSort] = React.useState<SortSpec | null>(null);
@@ -224,7 +366,20 @@ export default function TablePanel(): React.JSX.Element {
   const [filterDrafts, setFilterDrafts] = React.useState<Record<string, FilterDraft>>({});
   const filterCloseHandledRef = React.useRef<{ field: string; action: 'apply' | 'clear' } | null>(null);
   const tableAreaRef = React.useRef<HTMLDivElement | null>(null);
+  const selectedElementRef = React.useRef<HTMLElement | null>(null);
+  const selectionTargetRef = React.useRef<SelectionTarget | null>(null);
   const [tableBodyHeight, setTableBodyHeight] = React.useState(240);
+
+  const clearSelectionDom = React.useCallback(() => {
+    const element = selectedElementRef.current;
+    element?.classList.remove('ct-cell-selected', 'ct-row-selected');
+    if (element instanceof HTMLElement) {
+      delete element.dataset.selectionCellSelected;
+      delete element.dataset.selectionRowSelected;
+    }
+    selectedElementRef.current = null;
+    selectionTargetRef.current = null;
+  }, []);
 
   const { order, visible, widths, marked, toggleVisible, toggleAllVisible, resetOrder, setWidth, toggleMarked } = useColumnPrefs(state?.database ?? '', state?.table ?? '');
 
@@ -240,7 +395,7 @@ export default function TablePanel(): React.JSX.Element {
         setDrafts([]);
         setEdits({});
         setDeletes({});
-        setEditing(null);
+        clearSelectionDom();
         setCtxMenu(null);
         setHeaderMenu(null);
         setFilterOpenField(null);
@@ -397,46 +552,87 @@ export default function TablePanel(): React.JSX.Element {
   }, [changeCount]);
 
   // ---- 行/单元格操作 ----
-  // editing / editingValue 同步到 ref：saveEdit 保持稳定引用，CellContent 的 memo 才生效
-  const editingRef = React.useRef<EditingCell | null>(null);
-  editingRef.current = editing;
-  const editingValueRef = React.useRef('');
-  editingValueRef.current = editingValue;
+  React.useEffect(() => {
+    const area = tableAreaRef.current;
+    if (!area) return;
+
+    const onMouseDown = (event: MouseEvent) => {
+      const element = event.target instanceof Element ? event.target : null;
+      if (event.button !== 0 || element?.closest('.ct-cell-editor') || area.querySelector('.ct-cell-editor')) return;
+      const cell = element?.closest('td[data-selection-row-key]') as HTMLTableCellElement | null;
+      if (!cell || !area.contains(cell)) return;
+
+      const key = cell.dataset.selectionRowKey;
+      if (!key) return;
+      const isRowSelection = cell.dataset.selectionRow === 'true';
+      const row = cell.closest('tr') as HTMLElement | null;
+      if (!row) return;
+
+      if (isRowSelection) {
+        if (selectionTargetRef.current?.kind === 'row'
+          && selectionTargetRef.current.key === key
+          && selectedElementRef.current === row) {
+          setCtxMenu(null);
+          setHeaderMenu(null);
+          return;
+        }
+        clearSelectionDom();
+        row.classList.add('ct-row-selected');
+        row.dataset.selectionRowSelected = 'true';
+        selectedElementRef.current = row;
+        selectionTargetRef.current = { kind: 'row', key };
+      } else {
+        const field = cell.dataset.selectionField;
+        if (!field) return;
+        if (selectionTargetRef.current?.kind === 'cell'
+          && selectionTargetRef.current.key === key
+          && selectionTargetRef.current.field === field
+          && selectedElementRef.current === cell) {
+          setCtxMenu(null);
+          setHeaderMenu(null);
+          return;
+        }
+        clearSelectionDom();
+        cell.classList.add('ct-cell-selected');
+        cell.dataset.selectionCellSelected = 'true';
+        selectedElementRef.current = cell;
+        selectionTargetRef.current = { kind: 'cell', key, field };
+      }
+      setCtxMenu(null);
+      setHeaderMenu(null);
+    };
+
+    area.addEventListener('mousedown', onMouseDown);
+    return () => {
+      area.removeEventListener('mousedown', onMouseDown);
+      clearSelectionDom();
+    };
+  }, [clearSelectionDom, state]);
 
   const rowByKey = React.useCallback(
     (key: string): LocalRow | undefined => displayRows.find((r) => r.__key === key),
     [displayRows],
   );
 
-  const startEdit = React.useCallback((key: string, field: string) => {
+  const beginEdit = React.useCallback(() => {
+    clearSelectionDom();
+    setCtxMenu(null);
+    setHeaderMenu(null);
+  }, [clearSelectionDom]);
+
+  const saveEdit = React.useCallback((key: string, field: string, newVal: string) => {
     const row = rowByKey(key);
-    if (!row || isHex(row[field] as CellValue)) return;
-    setEditing({ key, field });
-    setEditingValue(editValue(row[field] as CellValue));
+    if (!row) return;
+    const old = editValue(row[field] as CellValue);
+    if (old === newVal) return;
+    setEdits((prev) => ({
+      ...prev,
+      [key]: {
+        changes: { ...(prev[key]?.changes ?? {}), [field]: newVal },
+        pkValues: row.__pkValues ?? [],
+      },
+    }));
   }, [rowByKey]);
-
-  const saveEdit = React.useCallback(() => {
-    const cur = editingRef.current;
-    if (!cur) return;
-    const row = rowByKey(cur.key);
-    if (!row) { setEditing(null); return; }
-    const old = editValue(row[cur.field] as CellValue);
-    const newVal = editingValueRef.current;
-    if (old !== newVal) {
-      setEdits((prev) => ({
-        ...prev,
-        [cur.key]: {
-          changes: { ...(prev[cur.key]?.changes ?? {}), [cur.field]: newVal },
-          pkValues: row.__pkValues ?? [],
-        },
-      }));
-    }
-    setEditing(null);
-  }, [rowByKey]);
-
-  const cancelEdit = React.useCallback(() => setEditing(null), []);
-
-  const onEditValueChange = React.useCallback((v: string) => setEditingValue(v), []);
 
   const copyRow = (key: string) => {
     const src = rowByKey(key);
@@ -489,7 +685,6 @@ export default function TablePanel(): React.JSX.Element {
       }
       return next;
     });
-    if (editing?.key === key && editing.field === field) setEditing(null);
   };
 
   /** 撤销本地新增行 */
@@ -501,7 +696,6 @@ export default function TablePanel(): React.JSX.Element {
       delete next[key];
       return next;
     });
-    if (editing?.key === key) setEditing(null);
   };
 
   /** 翻页/刷新前确认（有未提交变更时） */
@@ -714,17 +908,18 @@ export default function TablePanel(): React.JSX.Element {
         },
       }),
       onCell: (row: LocalRow) => ({
-        className: 'ct-row-number-cell ct-sticky-body',
+        className: [
+          'ct-row-number-cell',
+          'ct-sticky-body',
+          row.__status === 'deleted' ? 'ct-sticky-status-deleted' : '',
+          row.__status === 'new' ? 'ct-sticky-status-new' : '',
+        ].filter(Boolean).join(' '),
+        'data-selection-row-key': row.__key,
+        'data-selection-row': 'true',
         style: {
           position: 'sticky',
           left: 0,
           zIndex: 2,
-          background:
-            row.__status === 'deleted'
-              ? 'rgba(255, 90, 90, .16)'
-              : row.__status === 'new'
-                ? 'rgba(255, 200, 60, .14)'
-                : 'var(--vscode-editorGroupHeader-tabsBackground)',
         },
       }),
       render: (_value: unknown, _row: LocalRow, index: number) => (
@@ -881,6 +1076,10 @@ export default function TablePanel(): React.JSX.Element {
             key: c.field,
             width: widths[c.field] ?? 150,
             ellipsis: true,
+            shouldCellUpdate: (record, previousRecord) => (
+              record[c.field] !== previousRecord[c.field]
+              || record.__status !== previousRecord.__status
+            ),
             onHeaderCell: () => ({
               className: `ct-th-resizable${isSticky ? ' ct-sticky-header' : ''}`,
               'data-field': c.field,
@@ -902,11 +1101,12 @@ export default function TablePanel(): React.JSX.Element {
             render: (v: CellValue, row: LocalRow) => (
               <CellContent
                 value={v}
-                editing={!!(editing && editing.key === row.__key && editing.field === c.field)}
-                editingValue={editingValue}
-                onChange={onEditValueChange}
+                rowKey={row.__key}
+                field={c.field}
+                canEdit={row.__status !== 'deleted' && !isHex(v)}
+                resetToken={state}
+                onEditStart={beginEdit}
                 onSave={saveEdit}
-                onCancel={cancelEdit}
               />
             ),
             onCell: (row: LocalRow) => {
@@ -914,31 +1114,31 @@ export default function TablePanel(): React.JSX.Element {
                 && row.__status !== 'deleted'
                 && !!edits[row.__key]
                 && Object.prototype.hasOwnProperty.call(edits[row.__key].changes, c.field);
+              const stickyStatusClass = isSticky
+                ? row.__status === 'deleted'
+                  ? 'ct-sticky-status-deleted'
+                  : row.__status === 'new'
+                    ? 'ct-sticky-status-new'
+                    : cellEdited
+                      ? 'ct-sticky-status-modified'
+                      : ''
+                : '';
               const className = [
                 isSticky ? 'ct-sticky-body' : '',
                 cellEdited ? 'ct-cell-modified' : '',
+                stickyStatusClass,
               ].filter(Boolean).join(' ') || undefined;
               return {
                 className,
+                'data-selection-row-key': row.__key,
+                'data-selection-field': c.field,
                 style: isSticky
                   ? {
                       position: 'sticky',
                       left: stickyLeft,
                       zIndex: 2,
-                      background:
-                        row.__status === 'deleted'
-                          ? 'rgba(255, 90, 90, .16)'
-                          : row.__status === 'new'
-                            ? 'rgba(255, 200, 60, .14)'
-                            : cellEdited
-                              ? 'rgba(100, 180, 255, .18)'
-                              : 'var(--vscode-editor-background)',
                     }
                   : undefined,
-                onDoubleClick: () => {
-                  if (row.__status === 'deleted') return;
-                  startEdit(row.__key, c.field);
-                },
                 onContextMenu: (e: React.MouseEvent) => {
                   e.preventDefault();
                   setHeaderMenu(null);
@@ -957,8 +1157,6 @@ export default function TablePanel(): React.JSX.Element {
     visible,
     widths,
     marked,
-    editing,
-    editingValue,
     edits,
     deletes,
     sort,
@@ -1009,30 +1207,12 @@ export default function TablePanel(): React.JSX.Element {
         onApply={applySqlFilter}
       />
       <div ref={tableAreaRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        <Table
-          rowKey="__key"
+        <TableSurface
           columns={columns}
-          dataSource={displayRows}
-          size="small"
+          rows={displayRows}
           loading={loading}
-          pagination={false}
-          bordered
-          tableLayout="fixed"
-          scroll={{ x: scrollX, y: tableBodyHeight }}
-          onRow={(row) => ({
-            className:
-              row.__status === 'deleted'
-                ? 'ct-row-deleted'
-                : row.__status === 'new'
-                  ? 'ct-row-new'
-                  : row.__status === 'modified'
-                    ? 'ct-row-modified'
-                    : undefined,
-            onClick: () => {
-              setCtxMenu(null);
-              setHeaderMenu(null);
-            },
-          })}
+          scrollX={scrollX}
+          tableBodyHeight={tableBodyHeight}
         />
       </div>
       <div

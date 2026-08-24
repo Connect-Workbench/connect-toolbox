@@ -85,12 +85,20 @@ function multiPick(
     const pick = vscode.window.createQuickPick<vscode.QuickPickItem>();
     let settled = false;
 
-    pick.items = all.map(name => ({
-      label: name,
-      picked: selected.includes(name),
-    }));
-    pick.placeholder = placeHolder;
+    const available = new Set(all);
+    const remembered = selected.filter((name, index) => (
+      available.has(name) && selected.indexOf(name) === index
+    ));
+    const rememberedSet = new Set(remembered);
+    const items = [
+      ...remembered,
+      ...all.filter(name => !rememberedSet.has(name)),
+    ].map(label => ({ label }));
+
     pick.canSelectMany = true;
+    pick.items = items;
+    pick.selectedItems = items.filter(item => rememberedSet.has(item.label));
+    pick.placeholder = placeHolder;
     pick.matchOnDescription = true;
     // 失去焦点即隐藏；onDidHide 会把当前勾选结果保存下来
     pick.ignoreFocusOut = false;
