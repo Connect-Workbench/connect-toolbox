@@ -7,7 +7,6 @@ import {
   DoubleRightOutlined,
   SettingOutlined,
   ReloadOutlined,
-  PlusOutlined,
   CheckOutlined,
   FilterFilled,
   FilterOutlined,
@@ -28,7 +27,6 @@ import {
   TableQuery,
 } from './types';
 import { useColumnPrefs } from './useColumnPrefs';
-import { AddRowModal } from './AddRowModal';
 import { SqlFilterEditor } from './SqlFilterEditor';
 import { t } from '../../i18n';
 
@@ -66,6 +64,119 @@ interface FilterDraft {
   operator: FilterOperator;
   value: string;
 }
+
+function filterToDraft(filter?: FilterSpec): FilterDraft {
+  return {
+    operator: filter?.operator ?? '=',
+    value: filter?.value ?? '',
+  };
+}
+
+const ColumnFilterPopover = React.memo(function ColumnFilterPopover({
+  field,
+  filter,
+  onApply,
+  onClear,
+}: {
+  field: string;
+  filter?: FilterSpec;
+  onApply: (field: string, draft: FilterDraft) => boolean;
+  onClear: (field: string) => boolean;
+}): React.JSX.Element {
+  const [open, setOpen] = React.useState(false);
+  const [draft, setDraft] = React.useState<FilterDraft>(() => filterToDraft(filter));
+  const closeHandledRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (!open) setDraft(filterToDraft(filter));
+  }, [filter, open]);
+
+  const apply = React.useCallback(() => {
+    if (!onApply(field, draft)) return false;
+    closeHandledRef.current = true;
+    setOpen(false);
+    return true;
+  }, [draft, field, onApply]);
+
+  const clear = React.useCallback(() => {
+    if (!onClear(field)) return false;
+    setDraft(filterToDraft(undefined));
+    closeHandledRef.current = true;
+    setOpen(false);
+    return true;
+  }, [field, onClear]);
+
+  const handleOpenChange = React.useCallback((nextOpen: boolean) => {
+    if (nextOpen) {
+      closeHandledRef.current = false;
+      setDraft(filterToDraft(filter));
+      setOpen(true);
+      return;
+    }
+    if (closeHandledRef.current) {
+      closeHandledRef.current = false;
+      setOpen(false);
+      return;
+    }
+    apply();
+  }, [apply, filter]);
+
+  const operator = draft.operator;
+  return (
+    <Popover
+      trigger="click"
+      open={open}
+      placement="bottomRight"
+      onOpenChange={handleOpenChange}
+      content={(
+        <div style={{ width: 190 }} onMouseDown={(event) => event.stopPropagation()}>
+          <Select<FilterOperator>
+            size="small"
+            value={operator}
+            options={FILTER_OPERATOR_OPTIONS}
+            onChange={(nextOperator) => setDraft({ operator: nextOperator, value: '' })}
+            getPopupContainer={(trigger) => trigger.parentElement ?? document.body}
+            style={{ width: '100%', marginBottom: 8 }}
+          />
+          {!OPERATORS_WITHOUT_VALUE.has(operator) && (
+            <Input
+              size="small"
+              autoFocus
+              value={draft.value}
+              placeholder={
+                ['IN', 'NOT IN'].includes(operator)
+                  ? t('multipleValues')
+                  : ['BETWEEN', 'NOT BETWEEN'].includes(operator)
+                    ? t('twoValues')
+                    : t('filterValue')
+              }
+              onChange={(event) => setDraft((prev) => ({ ...prev, value: event.target.value }))}
+              onPressEnter={apply}
+            />
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 8 }}>
+            <Button size="small" onClick={clear}>{t('clear')}</Button>
+            <Button type="primary" size="small" onClick={apply}>{t('confirm')}</Button>
+          </div>
+        </div>
+      )}
+    >
+      <Button
+        type="text"
+        size="small"
+        aria-label={t('filterColumn', { field })}
+        icon={filter ? <FilterFilled /> : <FilterOutlined />}
+        onClick={(event) => event.stopPropagation()}
+        style={{
+          width: 18,
+          height: 20,
+          padding: 0,
+          color: filter ? 'var(--vscode-focusBorder)' : 'var(--vscode-descriptionForeground)',
+        }}
+      />
+    </Popover>
+  );
+});
 
 /** 单元格展示文本 */
 export function cellText(v: CellValue): string {
@@ -349,7 +460,6 @@ export default function TablePanel(): React.JSX.Element {
   const [state, setState] = React.useState<PagePayload | null>(null);
   const [error, setError] = React.useState<string>('');
   const [loading, setLoading] = React.useState(false);
-  const [addOpen, setAddOpen] = React.useState(false);
   const [committing, setCommitting] = React.useState(false);
 
   // ---- 本地暂存（Commit 后一次性提交） ----
@@ -362,9 +472,12 @@ export default function TablePanel(): React.JSX.Element {
   const [filters, setFilters] = React.useState<Record<string, FilterSpec>>({});
   const [sqlFilter, setSqlFilter] = React.useState('');
   const [sqlFilterDraft, setSqlFilterDraft] = React.useState('');
-  const [filterOpenField, setFilterOpenField] = React.useState<string | null>(null);
-  const [filterDrafts, setFilterDrafts] = React.useState<Record<string, FilterDraft>>({});
-  const filterCloseHandledRef = React.useRef<{ field: string; action: 'apply' | 'clear' } | null>(null);
+  const filtersRef = React.useRef(filters);
+  const sortRef = React.useRef<SortSpec | null>(sort);
+  const sqlFilterRef = React.useRef('');
+  filtersRef.current = filters;
+  sortRef.current = sort;
+  sqlFilterRef.current = sqlFilter;
   const tableAreaRef = React.useRef<HTMLDivElement | null>(null);
   const selectedElementRef = React.useRef<HTMLElement | null>(null);
   const selectionTargetRef = React.useRef<SelectionTarget | null>(null);
@@ -398,7 +511,6 @@ export default function TablePanel(): React.JSX.Element {
         clearSelectionDom();
         setCtxMenu(null);
         setHeaderMenu(null);
-        setFilterOpenField(null);
         const pagePayload = m.payload as PagePayload;
         if (pagePayload.query) {
           setSort(pagePayload.query.sort ?? null);
@@ -545,6 +657,8 @@ export default function TablePanel(): React.JSX.Element {
   }, [state, drafts, edits, deletes]);
 
   const changeCount = drafts.length + Object.keys(edits).length + Object.keys(deletes).length;
+  const changeCountRef = React.useRef(changeCount);
+  changeCountRef.current = changeCount;
 
   // 变更数实时上报主进程（用于关闭面板时提醒）
   React.useEffect(() => {
@@ -699,82 +813,60 @@ export default function TablePanel(): React.JSX.Element {
   };
 
   /** 翻页/刷新前确认（有未提交变更时） */
-  const confirmDiscard = (): boolean => {
-    if (changeCount === 0) return true;
-    return window.confirm(t('discardWarning', { count: changeCount }));
-  };
+  const confirmDiscard = React.useCallback((): boolean => {
+    const count = changeCountRef.current;
+    if (count === 0) return true;
+    return window.confirm(t('discardWarning', { count }));
+  }, []);
 
-  const makeQuery = (
+  const makeQuery = React.useCallback((
     nextSort: SortSpec | null,
     nextFilters: Record<string, FilterSpec>,
-    nextSqlFilter: string = sqlFilter,
+    nextSqlFilter: string = sqlFilterRef.current,
   ): TableQuery => ({
     sort: nextSort ?? undefined,
     filters: Object.values(nextFilters),
     sqlFilter: nextSqlFilter.trim() || undefined,
-  });
+  }), []);
 
-  const applyQuery = (
+  const applyQuery = React.useCallback((
     nextSort: SortSpec | null,
     nextFilters: Record<string, FilterSpec>,
-    nextSqlFilter: string = sqlFilter,
+    nextSqlFilter: string = sqlFilterRef.current,
   ): boolean => {
-    const currentFields = new Set(Object.keys(filters));
+    const currentFilters = filtersRef.current;
+    const currentSort = sortRef.current;
+    const currentSqlFilter = sqlFilterRef.current;
+    const currentFields = new Set(Object.keys(currentFilters));
     const nextFields = new Set(Object.keys(nextFilters));
     const filtersChanged = currentFields.size !== nextFields.size
       || [...currentFields].some((field) => {
-        const before = filters[field];
+        const before = currentFilters[field];
         const after = nextFilters[field];
         return !after || !before || before.operator !== after.operator || before.value !== after.value;
       });
-    const sortChanged = sort?.field !== nextSort?.field || sort?.direction !== nextSort?.direction;
+    const sortChanged = currentSort?.field !== nextSort?.field || currentSort?.direction !== nextSort?.direction;
     const normalizedSqlFilter = nextSqlFilter.trim();
-    const sqlFilterChanged = sqlFilter !== normalizedSqlFilter;
-    if (!sortChanged && !filtersChanged && !sqlFilterChanged) {
-      setFilterOpenField(null);
-      return true;
-    }
+    const sqlFilterChanged = currentSqlFilter !== normalizedSqlFilter;
+    if (!sortChanged && !filtersChanged && !sqlFilterChanged) return true;
     if (!confirmDiscard()) return false;
     setSort(nextSort);
     setFilters(nextFilters);
     setSqlFilter(normalizedSqlFilter);
-    setFilterOpenField(null);
     loadPage(1, makeQuery(nextSort, nextFilters, normalizedSqlFilter));
     return true;
-  };
+  }, [confirmDiscard, loadPage, makeQuery]);
 
-  const handleSort = (field: string, direction: 'asc' | 'desc') => {
-    const nextSort = sort?.field === field && sort.direction === direction
+  const handleSort = React.useCallback((field: string, direction: 'asc' | 'desc') => {
+    const currentSort = sortRef.current;
+    const nextSort = currentSort?.field === field && currentSort.direction === direction
       ? null
       : { field, direction };
-    applyQuery(nextSort, filters);
-  };
+    applyQuery(nextSort, filtersRef.current);
+  }, [applyQuery]);
 
-  const openFilter = (field: string) => {
-    filterCloseHandledRef.current = null;
-    const current = filters[field];
-    setFilterDrafts((prev) => ({
-      ...prev,
-      [field]: { operator: current?.operator ?? '=', value: current?.value ?? '' },
-    }));
-    setFilterOpenField(field);
-    setHeaderMenu(null);
-  };
-
-  const updateFilterDraft = (field: string, patch: Partial<FilterDraft>) => {
-    filterCloseHandledRef.current = null;
-    setFilterDrafts((prev) => ({
-      ...prev,
-      [field]: {
-        operator: patch.operator ?? prev[field]?.operator ?? '=',
-        value: patch.value ?? prev[field]?.value ?? '',
-      },
-    }));
-  };
-
-  const applyFilterDraft = (field: string): boolean => {
-    const draft = filterDrafts[field] ?? { operator: '=', value: '' };
-    const nextFilters = { ...filters };
+  const applyColumnFilter = React.useCallback((field: string, draft: FilterDraft): boolean => {
+    const nextFilters = { ...filtersRef.current };
     const hasValue = OPERATORS_WITHOUT_VALUE.has(draft.operator) || draft.value.trim().length > 0;
     if (hasValue) {
       nextFilters[field] = {
@@ -785,25 +877,18 @@ export default function TablePanel(): React.JSX.Element {
     } else {
       delete nextFilters[field];
     }
-    const applied = applyQuery(sort, nextFilters);
-    if (applied) {
-      filterCloseHandledRef.current = { field, action: 'apply' };
-    }
-    return applied;
-  };
+    return applyQuery(sortRef.current, nextFilters);
+  }, [applyQuery]);
 
-  const clearFilter = (field: string) => {
-    const nextFilters = { ...filters };
+  const clearColumnFilter = React.useCallback((field: string): boolean => {
+    const nextFilters = { ...filtersRef.current };
     delete nextFilters[field];
-    const applied = applyQuery(sort, nextFilters);
-    if (!applied) return;
-    filterCloseHandledRef.current = { field, action: 'clear' };
-    setFilterDrafts((prev) => ({ ...prev, [field]: { operator: '=', value: '' } }));
-  };
+    return applyQuery(sortRef.current, nextFilters);
+  }, [applyQuery]);
 
   const applySqlFilter = () => {
     const nextSqlFilter = sqlFilterDraft.trim();
-    if (applyQuery(sort, filters, nextSqlFilter)) {
+    if (applyQuery(sortRef.current, filtersRef.current, nextSqlFilter)) {
       setSqlFilterDraft(nextSqlFilter);
     }
   };
@@ -1004,72 +1089,12 @@ export default function TablePanel(): React.JSX.Element {
                     }}
                   />
                 </span>
-                <Popover
-                  trigger="click"
-                  open={filterOpenField === c.field}
-                  placement="bottomRight"
-                  onOpenChange={(open) => {
-                    if (open) {
-                      openFilter(c.field);
-                    } else if (filterCloseHandledRef.current?.field === c.field) {
-                      filterCloseHandledRef.current = null;
-                    } else {
-                      applyFilterDraft(c.field);
-                    }
-                  }}
-                  content={(
-                    <div style={{ width: 190 }} onMouseDown={(event) => event.stopPropagation()}>
-                      <Select<FilterOperator>
-                        size="small"
-                        value={filterDrafts[c.field]?.operator ?? filters[c.field]?.operator ?? '='}
-                        options={FILTER_OPERATOR_OPTIONS}
-                        onChange={(operator) => updateFilterDraft(c.field, { operator, value: '' })}
-                        getPopupContainer={(trigger) => trigger.parentElement ?? document.body}
-                        style={{ width: '100%', marginBottom: 8 }}
-                      />
-                      {!OPERATORS_WITHOUT_VALUE.has(filterDrafts[c.field]?.operator ?? filters[c.field]?.operator ?? '=') && (
-                        <Input
-                          size="small"
-                          autoFocus
-                          value={filterDrafts[c.field]?.value ?? filters[c.field]?.value ?? ''}
-                          placeholder={
-                            ['IN', 'NOT IN'].includes(filterDrafts[c.field]?.operator ?? filters[c.field]?.operator ?? '=')
-                              ? t('multipleValues')
-                              : ['BETWEEN', 'NOT BETWEEN'].includes(filterDrafts[c.field]?.operator ?? filters[c.field]?.operator ?? '=')
-                                ? t('twoValues')
-                                : t('filterValue')
-                          }
-                          onChange={(event) => updateFilterDraft(c.field, { value: event.target.value })}
-                          onPressEnter={() => applyFilterDraft(c.field)}
-                        />
-                      )}
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 8 }}>
-                        <Button size="small" onClick={() => clearFilter(c.field)}>
-                          {t('clear')}
-                        </Button>
-                        <Button type="primary" size="small" onClick={() => applyFilterDraft(c.field)}>
-                          {t('confirm')}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                >
-                  <Button
-                    type="text"
-                    size="small"
-                    aria-label={t('filterColumn', { field: c.field })}
-                    icon={filters[c.field] ? <FilterFilled /> : <FilterOutlined />}
-                    onClick={(event) => event.stopPropagation()}
-                    style={{
-                      width: 18,
-                      height: 20,
-                      padding: 0,
-                      color: filters[c.field]
-                        ? 'var(--vscode-focusBorder)'
-                        : 'var(--vscode-descriptionForeground)',
-                    }}
-                  />
-                </Popover>
+                <ColumnFilterPopover
+                  field={c.field}
+                  filter={filters[c.field]}
+                  onApply={applyColumnFilter}
+                  onClear={clearColumnFilter}
+                />
               </div>
             ),
             dataIndex: c.field,
@@ -1161,8 +1186,8 @@ export default function TablePanel(): React.JSX.Element {
     deletes,
     sort,
     filters,
-    filterOpenField,
-    filterDrafts,
+    applyColumnFilter,
+    clearColumnFilter,
   ]);
 
   // 表格区域自适应：让表头 + 数据体（包含横向滚动条）完整落在可用高度内
@@ -1242,7 +1267,6 @@ export default function TablePanel(): React.JSX.Element {
         </Space>
         <Divider type="vertical" style={{ height: 20, margin: '0 4px', borderColor: 'var(--vscode-panel-border)' }} />
         <Space size={8} wrap={false} style={{ flexShrink: 0 }}>
-          <Button size="small" icon={<PlusOutlined />} disabled={!state.hasPk} onClick={() => setAddOpen(true)}>{t('addRow')}</Button>
           <Button
             size="small"
             type={changeCount > 0 ? 'primary' : 'default'}
@@ -1296,14 +1320,6 @@ export default function TablePanel(): React.JSX.Element {
         >
           <span />
         </Dropdown>
-      )}
-      {addOpen && (
-        <AddRowModal
-          columns={state.columns}
-          page={state.page}
-          onClose={() => setAddOpen(false)}
-          onAdded={() => loadPage(state.page, makeQuery(sort, filters))}
-        />
       )}
     </div>
   );
