@@ -13,6 +13,14 @@
   "command.filterTree": "过滤数据库 / 表",
   "command.refresh": "刷新",
   "command.editCell": "编辑单元格（在编辑器中打开）",
+  "command.openSettings": "打开设置",
+  "command.generateMcpConfig": "生成 MCP 配置",
+  "command.showMcpStatus": "查看 MCP 状态",
+  "configuration.title": "Connect Toolbox",
+  "configuration.language.description": "Connect Toolbox 使用的界面语言；自动跟随 VS Code 显示语言。",
+  "configuration.language.auto": "自动（跟随 VS Code）",
+  "configuration.language.zhCN": "简体中文",
+  "configuration.language.enUS": "English",
   "viewContainer.connectToolbox": "Connect Toolbox",
   "view.connections": "连接"
 }

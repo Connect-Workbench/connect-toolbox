@@ -13,6 +13,14 @@
   "command.filterTree": "Filter Databases / Tables",
   "command.refresh": "Refresh",
   "command.editCell": "Edit Cell (Open in Editor)",
+  "command.openSettings": "Open Settings",
+  "command.generateMcpConfig": "Generate MCP Configuration",
+  "command.showMcpStatus": "Show MCP Status",
+  "configuration.title": "Connect Toolbox",
+  "configuration.language.description": "Language used by Connect Toolbox. Auto follows VS Code's display language.",
+  "configuration.language.auto": "Auto (follow VS Code)",
+  "configuration.language.zhCN": "Simplified Chinese",
+  "configuration.language.enUS": "English",
   "viewContainer.connectToolbox": "Connect Toolbox",
   "view.connections": "Connections"
 }

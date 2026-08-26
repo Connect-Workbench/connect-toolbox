@@ -12,7 +12,7 @@ Connect Toolbox 是一个运行在 VS Code 中的开发者连接与数据工作�
 
 它将连接树、终端、查询面板和表格编辑器组织在 VS Code 的原生工作流中，减少在多个数据库客户端、终端工具和编辑器之间切换的成本。
 
-当前版本为 `0.1.0`，最低支持 VS Code `1.85.0`。
+当前版本为 `0.1.2`，最低支持 VS Code `1.85.0`。
 
 > 当前实现状态：SSH 和 MySQL 主流程可用；Redis 目前已支持连接配置和树节点展示，但 Redis 客户端连接、键浏览和键值编辑仍在后续路线图中。
 
@@ -91,7 +91,7 @@ Redis 连接模型、配置表单和连接树展示已经建立，但 Redis 客�
 ### 安装已构建的 VSIX
 
 ```bash
-code --install-extension connect-toolbox-0.1.0.vsix
+code --install-extension connect-toolbox-0.1.2.vsix
 ```
 
 也可以在 VS Code 的“扩展”视图中选择“从 VSIX 安装”。
@@ -103,6 +103,70 @@ code --install-extension connect-toolbox-0.1.0.vsix
 3. 对 SSH 或 MySQL 连接执行“连接”。
 4. SSH 连接可打开远程终端；MySQL 连接可展开数据库树。
 5. 在连接、数据库或表节点上打开查询面板、表数据面板或建表语句。
+
+## MCP（第一版）
+
+Connect Toolbox 提供独立的只读 MySQL MCP Server，外部 Agent 通过 stdio 启动，不依赖 VS Code 或扩展保持运行。
+
+### 设置面板
+
+左侧 `Connections` 面板的齿轮按钮会打开自写的设置面板，包含「常规设置」和「MCP」两个标签页：语言选择、密钥文件路径、MCP 配置生成、复制 Agent 配置和 stdio 实例状态。
+
+### 生成配置
+
+在左侧 `Connections` 面板点击 MCP 配置按钮、在设置面板点击「生成 MCP 配置」，或执行命令：
+
+```text
+Connect Toolbox: Generate MCP Configuration
+```
+
+插件会：
+
+- 生成独立 MCP 配置文件。
+- 只导出直连 MySQL 连接；SSH 隧道连接暂时跳过。
+- 使用 AES-256-GCM 加密数据库密码。
+- 将加密主密钥保存到用户目录 `~/.connect-toolbox/mcp.key`，文件权限仅当前用户可读写，不写入配置文件。
+- 将外部 Agent 的 stdio 配置片段复制到剪贴板。
+
+配置片段示例：
+
+```json
+{
+  "mcpServers": {
+    "connect-toolbox": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/path/to/dist/mcp-server.js",
+        "--config",
+        "/path/to/mcp-config.json"
+      ]
+    }
+  }
+}
+```
+
+配置文件包含连接元数据和加密密码，不包含明文密码或主密钥。将配置文件复制到其他机器后不能直接解密，需要在目标机器重新生成配置。密钥文件 `~/.connect-toolbox/mcp.key` 不能提交到 Git、复制给他人或放进配置目录之外的地方。
+
+### 当前 MCP 工具
+
+- `list_connections`：列出配置的 MySQL 连接，不返回密码。
+- `list_databases`：列出数据库账号可见的数据库。
+- `list_tables`：列出数据库账号可见的表和视图。
+- `describe_table`：查看表字段元数据。
+- `query_table`：对单张表执行结构化、只读、参数绑定查询。
+
+当前不提供任意 SQL、INSERT、UPDATE、DELETE、DDL 或 SSH 隧道 MCP 工具。结果默认限制为最多 `1000` 行，并限制返回文本大小。
+
+### MCP 实例状态
+
+执行以下命令可以查看由外部 Agent 启动的 stdio MCP 实例：
+
+```text
+Connect Toolbox: Show MCP Status
+```
+
+状态记录包含进程 PID、Agent `clientInfo`、启动时间、最近心跳和最后错误。stdio 进程由外部 Agent 管理，插件只负责观察状态。
 
 ## 架构
 
@@ -171,6 +235,7 @@ Webview 操作
 connect-toolbox/
 ├── src/
 │   ├── clients/        # MySQL 等数据库客户端
+│   ├── mcp/            # 独立 MCP Server、加密配置和状态记录
 │   ├── commands/       # VS Code 命令与面板注册
 │   ├── connection/     # 连接配置、存储和生命周期
 │   ├── providers/      # TreeView、DDL、单元格编辑器
@@ -208,8 +273,10 @@ cd ..
 
 | 命令 | 说明 |
 | --- | --- |
-| `npm run build` | 构建 Webview，并将 Extension Host 打包到 `dist/extension.js`。 |
+| `npm run build` | 构建 Webview、Extension Host 和独立 MCP Server，生成 `dist/extension.js` 与 `dist/mcp-server.js`。 |
 | `npm run build:webview` | 构建 Webview 资源到 `webview-dist/`。 |
+| `npm run build:mcp` | 单独构建 stdio MCP Server 到 `dist/mcp-server.js`。 |
+| `npm run mcp -- --config <path>` | 直接启动独立 stdio MCP Server。 |
 | `npm run watch` | 监听并构建 Extension Host。 |
 | `npm run dev:webview` | 启动 Webview Vite 开发服务器，默认端口 `5173`。 |
 | `npm run typecheck` | 检查 Extension Host TypeScript 类型。 |

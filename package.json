@@ -88,6 +88,21 @@
         "command": "connectToolbox.editCell",
         "title": "%command.editCell%",
         "icon": "$(edit)"
+      },
+      {
+        "command": "connectToolbox.openSettings",
+        "title": "%command.openSettings%",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "connectToolbox.generateMcpConfig",
+        "title": "%command.generateMcpConfig%",
+        "icon": "$(server)"
+      },
+      {
+        "command": "connectToolbox.showMcpStatus",
+        "title": "%command.showMcpStatus%",
+        "icon": "$(pulse)"
       }
     ],
     "viewsContainers": {
@@ -118,6 +133,11 @@
           "command": "connectToolbox.refresh",
           "when": "view == connectToolbox.connections",
           "group": "navigation@2"
+        },
+        {
+          "command": "connectToolbox.openSettings",
+          "when": "view == connectToolbox.connections",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -172,18 +192,41 @@
           "group": "9_delete@1"
         }
       ]
+    },
+    "configuration": {
+      "title": "%configuration.title%",
+      "properties": {
+        "connectToolbox.language": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "zh-CN",
+            "en-US"
+          ],
+          "enumDescriptions": [
+            "%configuration.language.auto%",
+            "%configuration.language.zhCN%",
+            "%configuration.language.enUS%"
+          ],
+          "description": "%configuration.language.description%"
+        }
+      }
     }
   },
   "scripts": {
-    "build": "npm run build:webview && node esbuild.mjs",
+    "build": "npm run build:webview && node esbuild.mjs && node esbuild.mjs --mcp",
     "build:webview": "cd webview && npm run build",
+    "build:mcp": "node esbuild.mjs --mcp",
     "watch": "node esbuild.mjs --watch",
     "dev:webview": "cd webview && npm run dev",
     "typecheck": "tsc --noEmit",
     "typecheck:webview": "cd webview && npm run typecheck",
+    "mcp": "node dist/mcp-server.js",
     "package": "npm run build && vsce package"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "ag-grid-community": "^36.1.0",
     "mysql2": "^3.23.3",
     "pino": "^10.3.1",

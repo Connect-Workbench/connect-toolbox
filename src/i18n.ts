@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 export type Locale = 'zh-CN' | 'en-US';
+export type LocalePreference = 'auto' | Locale;
 
 type MessageParams = Record<string, string | number>;
 
@@ -108,6 +109,47 @@ const enMessages = {
   unknownPanel: 'Unknown panel: {panel}',
   frontendNotBuilt: 'Frontend assets are not built. Run `npm run build:webview` first.',
   ddlExpired: '-- Content expired. View it again from the connection tree.',
+  mcpGenerateFailed: 'Failed to generate MCP configuration: {message}',
+  mcpNoDirectMysqlConnections: 'No direct MySQL connections are available for MCP.',
+  mcpSkippedConnections: '{count} non-direct connection(s) were skipped.',
+  mcpStatusTitle: 'Connect Toolbox MCP Status',
+  mcpStatusPlaceholder: 'Select an MCP instance to inspect',
+  mcpNoInstances: 'No MCP stdio instances found.',
+  mcpUnknownAgent: 'Unknown Agent',
+  mcpAgentVersion: 'Agent version',
+  mcpLastHeartbeat: 'Last heartbeat',
+  mcpConfigPath: 'Config',
+  mcpLastError: 'Last error',
+  settingsPanelTitle: 'Connect Toolbox Settings',
+  settingsGeneral: 'General',
+  settingsMcp: 'MCP',
+  settingsLanguage: 'Language',
+  settingsLanguageAuto: 'Auto (follow VS Code)',
+  settingsLanguageZh: 'Simplified Chinese',
+  settingsLanguageEn: 'English',
+  settingsLanguageHint: 'Changes apply to the connection tree and newly opened panels.',
+  settingsOpenNative: 'Open VS Code Settings',
+  settingsMcpStatus: 'MCP Status',
+  settingsMcpKeyPath: 'Key file',
+  settingsConfigPath: 'Config file',
+  settingsMcpInstances: 'Running stdio instances',
+  settingsMcpNoInstances: 'No stdio instances found.',
+  settingsRefresh: 'Refresh',
+  settingsGenerateConfig: 'Generate MCP configuration',
+  settingsCopyAgentConfig: 'Copy Agent configuration',
+  settingsAgentSnippet: 'Agent configuration (paste into your AI coding assistant)',
+  settingsMcpConfigContent: 'MCP configuration content',
+  settingsCopyConfig: 'Copy configuration',
+  settingsMcpConfigHint: 'Auto-saved to the path above. Copy the Agent configuration below to reference it in your AI assistant.',
+  settingsConfigGenerated: 'MCP configuration generated and auto-saved. Copy the content below.',
+  settingsAgentUnknown: 'Unknown Agent',
+  settingsInstanceRunning: 'running',
+  settingsInstanceStopped: 'stopped',
+  settingsInstanceError: 'error',
+  settingsMcpGenerateHint: 'Generates a configuration that exports direct MySQL connections and encrypts passwords with AES-256-GCM.',
+  settingsCopied: 'Copied to clipboard.',
+  settingsNoConfigYet: 'No MCP configuration generated yet. Generate one first.',
+  settingsGeneratedAt: 'Generated: {path}',
 } as const;
 
 type MessageKey = keyof typeof enMessages;
@@ -216,6 +258,47 @@ const zhMessages: Record<MessageKey, string> = {
   unknownPanel: '未知面板: {panel}',
   frontendNotBuilt: '前端资源未构建，请先运行 `npm run build:webview`',
   ddlExpired: '-- 内容已过期，请在连接树中重新查看',
+  mcpGenerateFailed: '生成 MCP 配置失败：{message}',
+  mcpNoDirectMysqlConnections: '没有可用于 MCP 的直连 MySQL 连接',
+  mcpSkippedConnections: '已跳过 {count} 个非直连连接',
+  mcpStatusTitle: 'Connect Toolbox MCP 状态',
+  mcpStatusPlaceholder: '选择一个 MCP 实例查看详情',
+  mcpNoInstances: '未找到 MCP stdio 实例',
+  mcpUnknownAgent: '未知 Agent',
+  mcpAgentVersion: 'Agent 版本',
+  mcpLastHeartbeat: '最近心跳',
+  mcpConfigPath: '配置',
+  mcpLastError: '最近错误',
+  settingsPanelTitle: 'Connect Toolbox 设置',
+  settingsGeneral: '常规设置',
+  settingsMcp: 'MCP',
+  settingsLanguage: '语言',
+  settingsLanguageAuto: '自动（跟随 VS Code）',
+  settingsLanguageZh: '简体中文',
+  settingsLanguageEn: 'English',
+  settingsLanguageHint: '修改后，连接树与重新打开的面板将使用新语言',
+  settingsOpenNative: '打开 VS Code 设置页',
+  settingsMcpStatus: 'MCP 状态',
+  settingsMcpKeyPath: '密钥文件',
+  settingsConfigPath: '配置文件',
+  settingsMcpInstances: '运行中的 stdio 实例',
+  settingsMcpNoInstances: '暂无 stdio 实例',
+  settingsRefresh: '刷新',
+  settingsGenerateConfig: '生成 MCP 配置',
+  settingsCopyAgentConfig: '复制 Agent 配置',
+  settingsAgentSnippet: 'Agent 配置（粘贴到你的 AI 编码助手）',
+  settingsMcpConfigContent: 'MCP 配置内容',
+  settingsCopyConfig: '复制配置内容',
+  settingsMcpConfigHint: '已自动保存到上方路径，复制上方 Agent 配置即可在 AI 助手中引用',
+  settingsConfigGenerated: '配置已生成并自动保存，请复制下方内容',
+  settingsAgentUnknown: '未知 Agent',
+  settingsInstanceRunning: '运行中',
+  settingsInstanceStopped: '已停止',
+  settingsInstanceError: '异常',
+  settingsMcpGenerateHint: '生成配置会导出直连 MySQL 连接，并使用 AES-256-GCM 加密密码',
+  settingsCopied: '已复制到剪贴板',
+  settingsNoConfigYet: '尚未生成 MCP 配置，请先生成',
+  settingsGeneratedAt: '已生成：{path}',
 };
 
 export function normalizeLocale(language: string | undefined): Locale {
@@ -223,6 +306,12 @@ export function normalizeLocale(language: string | undefined): Locale {
 }
 
 export function locale(): Locale {
+  const preference = vscode.workspace
+    .getConfiguration('connectToolbox')
+    .get<LocalePreference>('language', 'auto');
+  if (preference === 'zh-CN' || preference === 'en-US') {
+    return preference;
+  }
   return normalizeLocale(vscode.env.language);
 }
 

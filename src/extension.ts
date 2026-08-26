@@ -39,6 +39,13 @@ export function activate(context: vscode.ExtensionContext): void {
   registerDdlProvider(context);
   registerCellEditor(context);
   registerCommands(context, store, manager, tree);
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(event => {
+      if (event.affectsConfiguration('connectToolbox.language')) {
+        tree.refresh();
+      }
+    }),
+  );
 
   // 恢复最近打开的窗口（自动重连失败会汇总提示）
   void restorePanels(context, store, manager).catch(err => error('restorePanels failed', err));

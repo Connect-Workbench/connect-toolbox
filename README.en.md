@@ -12,7 +12,7 @@ Connect Toolbox is a developer-oriented connection and data workbench for VS Cod
 
 The project is designed to reduce the need to switch between database clients, terminal tools, and editors during day-to-day development and operations.
 
-The current version is `0.1.0` and the minimum supported VS Code version is `1.85.0`.
+The current version is `0.1.2` and the minimum supported VS Code version is `1.85.0`.
 
 > Current status: the SSH and MySQL workflows are usable. Redis connection configuration and tree display are available, but the Redis client, key browser, and value editor are planned for a later milestone.
 
@@ -91,7 +91,7 @@ The Redis connection model, configuration form, and tree display are in place, b
 ### Install a built VSIX
 
 ```bash
-code --install-extension connect-toolbox-0.1.0.vsix
+code --install-extension connect-toolbox-0.1.2.vsix
 ```
 
 You can also use **Install from VSIX...** from the VS Code Extensions view.
@@ -103,6 +103,70 @@ You can also use **Install from VSIX...** from the VS Code Extensions view.
 3. Connect the SSH or MySQL profile.
 4. Open a remote terminal for SSH, or expand the database tree for MySQL.
 5. Open the query panel, table data panel, or DDL view from a connection, database, or table node.
+
+## MCP (First Version)
+
+Connect Toolbox includes an independent read-only MySQL MCP Server. External Agents start it over stdio; it does not require VS Code or the extension to remain open.
+
+### Settings panel
+
+The gear button in the `Connections` view opens a custom settings panel with two tabs: General and MCP. It covers language selection, the key file path, MCP configuration generation, copying the Agent configuration, and stdio instance status.
+
+### Generate a configuration
+
+Click the MCP configuration button in the `Connections` view, click "Generate MCP configuration" in the settings panel, or run:
+
+```text
+Connect Toolbox: Generate MCP Configuration
+```
+
+The extension will:
+
+- Generate a standalone MCP configuration file.
+- Export direct MySQL connections only; SSH-tunneled connections are skipped for now.
+- Encrypt database passwords with AES-256-GCM.
+- Store the encryption key in `~/.connect-toolbox/mcp.key`, readable only by the current user, instead of inside the configuration file.
+- Copy an stdio configuration snippet for the external Agent to the clipboard.
+
+Example:
+
+```json
+{
+  "mcpServers": {
+    "connect-toolbox": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/path/to/dist/mcp-server.js",
+        "--config",
+        "/path/to/mcp-config.json"
+      ]
+    }
+  }
+}
+```
+
+The configuration contains connection metadata and encrypted passwords, not plaintext passwords or the master key. A configuration copied to another machine cannot be decrypted directly; generate a new configuration on the target machine. Never commit, share, or move the key file `~/.connect-toolbox/mcp.key` outside of its protected location.
+
+### MCP tools in this version
+
+- `list_connections`: list configured MySQL connections without passwords.
+- `list_databases`: list databases visible to the database account.
+- `list_tables`: list tables and views visible to the database account.
+- `describe_table`: inspect table column metadata.
+- `query_table`: run a structured, read-only, parameter-bound query against one table.
+
+This version does not expose arbitrary SQL, INSERT, UPDATE, DELETE, DDL, or SSH-tunnel MCP tools. Results are limited to at most `1000` rows and a maximum response size.
+
+### MCP instance status
+
+Run the following command to inspect stdio MCP instances started by external Agents:
+
+```text
+Connect Toolbox: Show MCP Status
+```
+
+Status records include the process PID, Agent `clientInfo`, start time, last heartbeat, and last error. The external Agent owns the stdio process lifecycle; the extension only observes its status.
 
 ## Architecture
 
@@ -171,6 +235,7 @@ Webview action
 connect-toolbox/
 ├── src/
 │   ├── clients/        # MySQL and other database clients
+│   ├── mcp/            # Standalone MCP Server, encrypted config, and status
 │   ├── commands/       # VS Code commands and panel registration
 │   ├── connection/     # Connection profiles, storage, and lifecycle
 │   ├── providers/      # TreeView, DDL, and cell editor providers
@@ -208,8 +273,10 @@ cd ..
 
 | Command | Description |
 | --- | --- |
-| `npm run build` | Build the Webview and bundle the Extension Host to `dist/extension.js`. |
+| `npm run build` | Build the Webview, Extension Host, and standalone MCP Server into `dist/extension.js` and `dist/mcp-server.js`. |
 | `npm run build:webview` | Build Webview assets into `webview-dist/`. |
+| `npm run build:mcp` | Build only the stdio MCP Server into `dist/mcp-server.js`. |
+| `npm run mcp -- --config <path>` | Start the standalone stdio MCP Server directly. |
 | `npm run watch` | Watch and rebuild the Extension Host. |
 | `npm run dev:webview` | Start the Vite Webview development server, normally on port `5173`. |
 | `npm run typecheck` | Type-check the Extension Host. |
