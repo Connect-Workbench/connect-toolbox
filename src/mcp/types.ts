@@ -12,6 +12,8 @@ export interface EncryptedSecret {
 export interface McpConnectionProfile {
   id: string;
   name: string;
+  /** 连接描述（可选）：用于 MCP 工具描述 */
+  description?: string;
   type: 'mysql';
   host: string;
   port: number;

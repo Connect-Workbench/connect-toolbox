@@ -2,14 +2,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { MySqlClient, TableFilterOperator, TableQuery } from '../clients/MySqlClient';
+import { createRuntime, type ConnectionConfig } from '@connect_workbench/mcp-core';
 import { loadMcpConfig } from './config';
 import { McpStatusReporter } from './status';
-import { ResolvedMcpConnection } from './types';
 
 const SERVER_NAME = 'connect-toolbox-mcp';
-const SERVER_VERSION = '0.1.0';
-const MAX_QUERY_ROWS = 1000;
+const SERVER_VERSION = '0.2.0';
 const MAX_RESULT_CHARS = 200_000;
 
 function readArg(name: string): string | undefined {
@@ -27,14 +25,6 @@ function printUsage(): void {
   ].join('\n'));
 }
 
-function jsonResult(value: unknown): { content: [{ type: 'text'; text: string }] } {
-  const text = JSON.stringify(value, null, 2);
-  if (text.length > MAX_RESULT_CHARS) {
-    throw new Error(`查询结果过大，请降低 limit（当前输出超过 ${MAX_RESULT_CHARS} 个字符）`);
-  }
-  return { content: [{ type: 'text', text }] };
-}
-
 function errorResult(error: unknown): { isError: true; content: [{ type: 'text'; text: string }] } {
   return {
     isError: true,
@@ -42,54 +32,38 @@ function errorResult(error: unknown): { isError: true; content: [{ type: 'text';
   };
 }
 
-class DatabaseRuntime {
-  private readonly profiles = new Map<string, ResolvedMcpConnection>();
-  private readonly clients = new Map<string, MySqlClient>();
-
-  constructor(connections: ResolvedMcpConnection[]) {
-    for (const connection of connections) this.profiles.set(connection.id, connection);
-  }
-
-  listConnections(): Array<Omit<ResolvedMcpConnection, 'password'>> {
-    return [...this.profiles.values()].map(({ password: _password, ...connection }) => connection);
-  }
-
-  async getClient(connectionId: string): Promise<MySqlClient> {
-    const profile = this.profiles.get(connectionId);
-    if (!profile) throw new Error(`MCP 连接不存在：${connectionId}`);
-    const existing = this.clients.get(connectionId);
-    if (existing) return existing;
-    const client = new MySqlClient(profile.host, profile.port, profile.username, profile.password);
-    await client.connect();
-    this.clients.set(connectionId, client);
-    return client;
-  }
-
-  async close(): Promise<void> {
-    await Promise.all([...this.clients.values()].map(client => client.close()));
-    this.clients.clear();
-  }
+/** 将连接名转成合法工具名后缀（只保留字母数字下划线连字符）。 */
+function safeToolSuffix(name: string): string {
+  const cleaned = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return cleaned || 'unnamed';
 }
-
-const filterOperator = z.enum([
-  '=', '!=', '<>', '>', '>=', '<', '<=', 'LIKE', 'NOT LIKE',
-  'IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'REGEXP', 'NOT REGEXP',
-  'IS NULL', 'IS NOT NULL',
-]);
-
-const connectionIdSchema = z.object({
-  connectionId: z.string().min(1),
-});
 
 export async function startMcpServer(configPath: string): Promise<void> {
   const config = await loadMcpConfig(configPath);
-  const runtime = new DatabaseRuntime(config.connections);
+
+  // 执行层复用 @connect_workbench/mcp-core：解密后的连接信息以明文传入，core 维护连接池/解码/渲染/拦截
+  const coreConnections: ConnectionConfig[] = config.connections.map(connection => ({
+    name: connection.name,
+    description: connection.description ?? connection.name,
+    host: connection.host,
+    port: connection.port,
+    username: connection.username,
+    password: connection.password ?? '',
+    // 插件连接默认明文直连（与原有行为一致），不启用 TLS
+    useSsl: false,
+  }));
+  const runtime = createRuntime({ connections: coreConnections });
+
   const status = new McpStatusReporter(config.statusDir, configPath, config.connections.map(c => c.id));
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
       capabilities: { tools: {} },
-      instructions: 'Connect Toolbox provides read-only MySQL metadata and table query tools.',
+      instructions: [
+        'Connect Toolbox provides MySQL access via one tool per connection.',
+        'Write SQL directly (SELECT / SHOW / DESCRIBE / EXPLAIN ...).',
+        'Dangerous statements (DELETE / DROP / TRUNCATE) are blocked.',
+      ].join(' '),
     },
   );
 
@@ -99,133 +73,35 @@ export async function startMcpServer(configPath: string): Promise<void> {
     status.setClient(client ? { name: client.name, version: client.version } : undefined);
   };
 
-  const readOnlyAnnotations = { readOnlyHint: true } as const;
-
-  server.registerTool(
-    'list_connections',
-    {
-      title: 'List MySQL connections',
-      description: 'List configured MySQL connections without returning passwords.',
-      annotations: readOnlyAnnotations,
-    },
-    async () => {
-      status.heartbeat();
-      return jsonResult({ connections: runtime.listConnections() });
-    },
-  );
-
-  server.registerTool(
-    'list_databases',
-    {
-      title: 'List databases',
-      description: 'List databases visible to the selected MySQL account.',
-      inputSchema: connectionIdSchema,
-      annotations: readOnlyAnnotations,
-    },
-    async ({ connectionId }) => {
-      try {
-        const databases = await (await runtime.getClient(connectionId)).listDatabases();
+  // 动态工具：每个连接注册一个 execute_{name}，AI 直接写 SQL
+  for (const connection of config.connections) {
+    const toolName = `execute_${safeToolSuffix(connection.name)}`;
+    const label = connection.description ?? connection.name;
+    server.registerTool(
+      toolName,
+      {
+        title: `Execute SQL on ${label}`,
+        description: `MySQL 执行 SQL（${label}）`,
+        inputSchema: {
+          sql: z.string().min(1).describe('要执行的 SQL 语句'),
+          format: z.enum(['json', 'markdown', 'table']).optional().describe('可选，临时覆盖输出格式'),
+        },
+      },
+      async ({ sql, format }) => {
         status.heartbeat();
-        return jsonResult({ connectionId, databases });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'list_tables',
-    {
-      title: 'List tables',
-      description: 'List tables and views visible to the selected MySQL account.',
-      inputSchema: connectionIdSchema.extend({ database: z.string().min(1) }),
-      annotations: readOnlyAnnotations,
-    },
-    async ({ connectionId, database }) => {
-      try {
-        const tables = await (await runtime.getClient(connectionId)).listTables(database);
-        status.heartbeat();
-        return jsonResult({ connectionId, database, tables });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'describe_table',
-    {
-      title: 'Describe table',
-      description: 'Return column metadata for a MySQL table or view.',
-      inputSchema: connectionIdSchema.extend({
-        database: z.string().min(1),
-        table: z.string().min(1),
-      }),
-      annotations: readOnlyAnnotations,
-    },
-    async ({ connectionId, database, table }) => {
-      try {
-        const columns = await (await runtime.getClient(connectionId)).describeTable(database, table);
-        status.heartbeat();
-        return jsonResult({ connectionId, database, table, columns });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'query_table',
-    {
-      title: 'Query table',
-      description: 'Run a read-only, parameter-bound query against one MySQL table.',
-      inputSchema: connectionIdSchema.extend({
-        database: z.string().min(1),
-        table: z.string().min(1),
-        offset: z.number().int().min(0).max(10_000_000).optional(),
-        limit: z.number().int().min(1).max(MAX_QUERY_ROWS).default(100),
-        filters: z.array(z.object({
-          field: z.string().min(1),
-          operator: filterOperator,
-          value: z.string().optional(),
-        })).max(50).optional(),
-        sort: z.object({
-          field: z.string().min(1),
-          direction: z.enum(['asc', 'desc']),
-        }).optional(),
-      }),
-      annotations: readOnlyAnnotations,
-    },
-    async ({ connectionId, database, table, offset, limit, filters, sort }) => {
-      try {
-        const query: TableQuery = {
-          filters: filters as Array<{ field: string; operator: TableFilterOperator; value?: string }> | undefined,
-          sort,
-        };
-        const result = await (await runtime.getClient(connectionId)).selectPage(
-          database,
-          table,
-          offset ?? 0,
-          limit,
-          query,
-        );
-        status.heartbeat();
-        return jsonResult({
-          connectionId,
-          database,
-          table,
-          offset: offset ?? 0,
-          limit,
-          columns: result.columns,
-          rows: result.rows,
-          rowCount: result.rows.length,
-          durationMs: result.durationMs,
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
+        try {
+          const result = await runtime.execute(connection.name, sql, { format });
+          const text = result.contents.join('\n');
+          if (text.length > MAX_RESULT_CHARS) {
+            throw new Error(`结果过大，请降低 limit（当前输出超过 ${MAX_RESULT_CHARS} 个字符）`);
+          }
+          return { content: result.contents.map(item => ({ type: 'text' as const, text: item })) };
+        } catch (error) {
+          return errorResult(error);
+        }
+      },
+    );
+  }
 
   const transport = new StdioServerTransport();
   let shuttingDown = false;

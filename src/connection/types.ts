@@ -9,6 +9,8 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'er
 export interface ConnectionConfig {
   id: string;
   name: string;
+  /** 描述（可选）：用于连接树/MCP 工具描述等展示 */
+  description?: string;
   type: ConnectionType;
   /** 目标主机 */
   host: string;

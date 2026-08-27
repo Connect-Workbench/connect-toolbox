@@ -83,6 +83,7 @@ export async function createMcpConfig(
     const profile: McpConnectionProfile = {
       id: connection.id,
       name: connection.name,
+      description: connection.description?.trim() || undefined,
       type: 'mysql',
       host: connection.host,
       port: connection.port,
@@ -125,6 +126,7 @@ export async function loadMcpConfig(filePath: string): Promise<ResolvedMcpConfig
   const connections = parsed.connections.map(connection => ({
     id: connection.id,
     name: connection.name,
+    description: connection.description,
     type: 'mysql' as const,
     host: connection.host,
     port: connection.port,

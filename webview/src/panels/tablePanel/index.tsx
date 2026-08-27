@@ -1167,6 +1167,15 @@ export default function TablePanel(): React.JSX.Element {
                 onContextMenu: (e: React.MouseEvent) => {
                   e.preventDefault();
                   setHeaderMenu(null);
+                  // 右键也给点中的 cell 加选中态（编辑态下保持不覆盖）
+                  const cell = e.currentTarget as HTMLTableCellElement;
+                  if (!cell.closest('.ct-cell-editor') && !tableAreaRef.current?.querySelector('.ct-cell-editor')) {
+                    clearSelectionDom();
+                    cell.classList.add('ct-cell-selected');
+                    cell.dataset.selectionCellSelected = 'true';
+                    selectedElementRef.current = cell;
+                    selectionTargetRef.current = { kind: 'cell', key: row.__key, field: c.field };
+                  }
                   setCtxMenu({ x: e.clientX, y: e.clientY, key: row.__key, field: c.field });
                 },
               };

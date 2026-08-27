@@ -6,7 +6,7 @@ import { ConnectionTreeProvider, nodeExpandKey } from './providers/ConnectionTre
 import { registerDdlProvider } from './providers/ddlProvider';
 import { registerCellEditor } from './providers/cellEditor';
 import { registerCommands } from './commands/registerCommands';
-import { restorePanels } from './commands/panelRegistry';
+// import { restorePanels } from './commands/panelRegistry';
 import { initLogger, info, error } from './utils/logger';
 
 let manager: ConnectionManager | undefined;
@@ -47,8 +47,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // 恢复最近打开的窗口（自动重连失败会汇总提示）
-  void restorePanels(context, store, manager).catch(err => error('restorePanels failed', err));
+  // 恢复最近打开的窗口：暂时屏蔽（reload 后不自动打开之前的窗口，还原逻辑待修复）
+  // void restorePanels(context, store, manager).catch(err => error('restorePanels failed', err));
 }
 
 export function deactivate(): void {

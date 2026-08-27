@@ -15,6 +15,7 @@ interface FormInitPayload {
 
 interface FormSavePayload {
   name: string;
+  description: string;
   type: ConnectionType;
   host: string;
   port: number;
@@ -149,6 +150,7 @@ async function buildConfig(
   return {
     id: existing?.id ?? crypto.randomUUID(),
     name: p.name,
+    description: p.description.trim() || undefined,
     type: p.type,
     host: p.host,
     port: p.port,
@@ -343,6 +345,8 @@ function renderHtml(webview: vscode.Webview): string {
 
   <div class="row"><label>${t('name')}</label><input type="text" id="name"><div class="field-error" data-for="name">${t('enterConnectionName')}</div></div>
 
+  <div class="row"><label>${t('descriptionOptional')}</label><input type="text" id="description"></div>
+
   <div class="inline">
     <div class="row"><label>${t('hostRequired')}</label><input type="text" id="host"><div class="field-error" data-for="host">${t('enterHost')}</div></div>
     <div class="row" style="flex:0 0 110px"><label>${t('portRequired')}</label><input type="text" id="port"><div class="field-error" data-for="port">${t('portRange')}</div></div>
@@ -521,6 +525,7 @@ function renderHtml(webview: vscode.Webview): string {
     var conn = document.querySelector('input[name=conn]:checked').value;
     return {
       name: $('name').value.trim(),
+      description: $('description').value.trim(),
       type: type,
       host: $('host').value.trim(),
       port: Number($('port').value),
@@ -549,6 +554,7 @@ function renderHtml(webview: vscode.Webview): string {
       var type = c ? c.type : 'ssh';
       document.querySelector('input[name=type][value="' + type + '"]').checked = true;
       $('name').value = c ? c.name : '';
+      $('description').value = c && c.description ? c.description : '';
       $('host').value = c ? c.host : '';
       $('port').value = c ? String(c.port) : (type === 'ssh' ? '22' : type === 'mysql' ? '3306' : '6379');
       $('username').value = c && c.username ? c.username : (type === 'ssh' ? 'root' : '');
