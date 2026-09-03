@@ -1,7 +1,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
+import { MCP_USER_DIR } from './paths';
 import { EncryptedSecret, MCP_CRYPTO_ALGORITHM } from './types';
 
 const KEY_LENGTH = 32;
@@ -9,7 +9,7 @@ const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 
 /** 默认 MCP 主密钥文件路径（跨平台、通用包可用） */
-export const DEFAULT_MCP_KEY_PATH = path.join(os.homedir(), '.connect-toolbox', 'mcp.key');
+export const DEFAULT_MCP_KEY_PATH = path.join(MCP_USER_DIR, 'mcp.key');
 
 function assertKey(key: Buffer): void {
   if (key.length !== KEY_LENGTH) {

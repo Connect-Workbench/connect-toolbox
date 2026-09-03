@@ -1,13 +1,14 @@
 #!/usr/bin/env node
+import * as fs from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { createRuntime, type ConnectionConfig } from '@connect_workbench/mcp-core';
 import { loadMcpConfig } from './config';
-import { McpStatusReporter } from './status';
+import { DEFAULT_MCP_CONFIG_PATH } from './paths';
 
 const SERVER_NAME = 'connect-toolbox-mcp';
-const SERVER_VERSION = '0.2.0';
+const SERVER_VERSION = '0.3.0';
 const MAX_RESULT_CHARS = 200_000;
 
 function readArg(name: string): string | undefined {
@@ -20,7 +21,10 @@ function printUsage(): void {
     'Connect Toolbox MCP Server',
     '',
     'Usage:',
-    '  node dist/mcp-server.js --config /path/to/mcp-config.json',
+    '  node dist/mcp-server.js [--config /path/to/mcp-config.json]',
+    '',
+    `默认读取配置文件：${DEFAULT_MCP_CONFIG_PATH}`,
+    '（在 VS Code 插件中执行「生成 MCP 配置」会自动写入该位置）',
     '',
   ].join('\n'));
 }
@@ -54,7 +58,6 @@ export async function startMcpServer(configPath: string): Promise<void> {
   }));
   const runtime = createRuntime({ connections: coreConnections });
 
-  const status = new McpStatusReporter(config.statusDir, configPath, config.connections.map(c => c.id));
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
@@ -66,12 +69,6 @@ export async function startMcpServer(configPath: string): Promise<void> {
       ].join(' '),
     },
   );
-
-  status.start();
-  server.server.oninitialized = () => {
-    const client = server.server.getClientVersion();
-    status.setClient(client ? { name: client.name, version: client.version } : undefined);
-  };
 
   // 动态工具：每个连接注册一个 execute_{name}，AI 直接写 SQL
   for (const connection of config.connections) {
@@ -88,7 +85,6 @@ export async function startMcpServer(configPath: string): Promise<void> {
         },
       },
       async ({ sql, format }) => {
-        status.heartbeat();
         try {
           const result = await runtime.execute(connection.name, sql, { format });
           const text = result.contents.join('\n');
@@ -109,7 +105,6 @@ export async function startMcpServer(configPath: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     if (reason) process.stderr.write(`[connect-toolbox-mcp] ${reason}\n`);
-    status.stop();
     await server.close().catch(() => undefined);
     await runtime.close();
   };
@@ -119,12 +114,10 @@ export async function startMcpServer(configPath: string): Promise<void> {
   process.on('SIGTERM', () => { void shutdown('received SIGTERM'); });
   process.on('uncaughtException', error => {
     process.stderr.write(`[connect-toolbox-mcp] uncaught exception: ${error.stack ?? error.message}\n`);
-    status.stop(error.message);
     process.exitCode = 1;
   });
   process.on('unhandledRejection', reason => {
     process.stderr.write(`[connect-toolbox-mcp] unhandled rejection: ${String(reason)}\n`);
-    status.setStatus('error', String(reason));
   });
 
   await server.connect(transport);
@@ -135,10 +128,13 @@ async function main(): Promise<void> {
     printUsage();
     return;
   }
-  const configPath = readArg('--config');
-  if (!configPath) {
+  // --config 可选：未指定时使用固定用户目录下的默认配置（~/.connect-toolbox/mcp-config.json）
+  const configPath = readArg('--config') ?? DEFAULT_MCP_CONFIG_PATH;
+  if (!fs.existsSync(configPath)) {
     printUsage();
-    throw new Error('缺少 --config 参数');
+    throw new Error(
+      `未找到 MCP 配置文件：${configPath}\n请在 VS Code 插件中执行「生成 MCP 配置」，或通过 --config 指定路径。`,
+    );
   }
   await startMcpServer(configPath);
 }

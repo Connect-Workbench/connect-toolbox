@@ -48,7 +48,6 @@ function assertConfig(value: unknown): asserts value is McpConfig {
   if (!value || typeof value !== 'object') throw new Error('MCP 配置必须是 JSON 对象');
   const config = value as Record<string, unknown>;
   if (config.version !== MCP_CONFIG_VERSION) throw new Error(`不支持的 MCP 配置版本：${String(config.version)}`);
-  if (typeof config.statusDir !== 'string' || !config.statusDir) throw new Error('MCP 配置缺少 statusDir');
   if (typeof config.keyPath !== 'string' || !config.keyPath) throw new Error('MCP 配置缺少 keyPath');
   if (!Array.isArray(config.connections)) throw new Error('MCP 配置缺少 connections 数组');
   for (const item of config.connections) {
@@ -69,7 +68,6 @@ function assertConfig(value: unknown): asserts value is McpConfig {
 export async function createMcpConfig(
   connections: ConnectionConfig[],
   readSecret: SecretReader,
-  statusDir: string,
   keyPath: string,
 ): Promise<McpConfig> {
   const key = await getOrCreateMcpKey(keyPath);
@@ -102,7 +100,6 @@ export async function createMcpConfig(
   return {
     version: MCP_CONFIG_VERSION,
     generatedAt: new Date().toISOString(),
-    statusDir: path.resolve(statusDir),
     keyPath: path.resolve(keyPath),
     connections: profiles,
   };
@@ -138,7 +135,6 @@ export async function loadMcpConfig(filePath: string): Promise<ResolvedMcpConfig
   return {
     version: parsed.version,
     generatedAt: parsed.generatedAt,
-    statusDir: path.resolve(parsed.statusDir),
     keyPath: path.resolve(parsed.keyPath),
     connections,
   };

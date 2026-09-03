@@ -75,7 +75,7 @@ export function openSettingsPanel(
           if (result) {
             send('configChanged', { snippet: result.snippet });
             const skippedText = result.skipped > 0 ? ` ${t('mcpSkippedConnections', { count: result.skipped })}` : '';
-            send('notice', { kind: 'ok', message: `${t('settingsConfigGenerated')}${skippedText}` });
+            send('notice', { kind: 'ok', message: `${t('settingsConfigGenerated')}${skippedText} · ${result.nodeReason}` });
           }
           break;
         }

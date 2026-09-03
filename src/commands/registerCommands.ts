@@ -13,7 +13,7 @@ import { runFilter } from './filterCommands';
 import { showDdl } from '../providers/ddlProvider';
 import { rememberPanel } from './panelRegistry';
 import { t } from '../i18n';
-import { generateMcpConfig, showMcpStatus } from '../mcp/commands';
+import { generateMcpConfig } from '../mcp/commands';
 
 export function registerCommands(
   context: vscode.ExtensionContext,
@@ -30,7 +30,6 @@ export function registerCommands(
   register('openSettings', () => openSettingsPanel(context, store));
 
   register('generateMcpConfig', () => generateMcpConfig(context, store));
-  register('showMcpStatus', () => showMcpStatus(context));
 
   register('addConnection', async () => {
     const config = await showConnectionForm(context, store);
