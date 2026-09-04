@@ -11,6 +11,16 @@ export interface QueryResult {
   durationMs: number;
 }
 
+/** 一条待执行的 SQL 语句（分词器切分结果，已去注释与首尾空白） */
+export interface SqlStatement {
+  /** 该语句在原始文本中的内容（保留注释外的原文，便于执行与展示） */
+  text: string;
+  /** 语句在原始文本里的起始偏移（含前导空白/注释，用于前端定位光标所属语句） */
+  start: number;
+  /** 语句文本在原始文本中的结束偏移 */
+  end: number;
+}
+
 export interface TableInfo {
   name: string;
   type: 'BASE TABLE' | 'VIEW';
@@ -76,6 +86,8 @@ export function qualifiedTable(database: string, table: string): string {
  */
 export class MySqlClient {
   private connection: Connection | null = null;
+  /** 当前已选中的库（执行 USE 后更新；未 USE 则为 undefined） */
+  private database: string | undefined;
 
   constructor(
     private readonly host: string,
@@ -88,7 +100,16 @@ export class MySqlClient {
     return this.connection !== null;
   }
 
-  async connect(): Promise<void> {
+  /** 当前生效的库（连接层默认库或最近一次 USE 的库），可能为 undefined */
+  get currentDatabase(): string | undefined {
+    return this.database;
+  }
+
+  /**
+   * 建立连接。database 可选：传入则连接时直接选定该库（createConnection({ database })），
+   * 否则连接处于"未选库"状态（靠 USE 或 SQL 里写全限定名）。
+   */
+  async connect(database?: string): Promise<void> {
     if (this.connection) {
       return;
     }
@@ -97,13 +118,22 @@ export class MySqlClient {
       port: this.port,
       user: this.user,
       password: this.password,
+      database,
       supportBigNumbers: true,
       connectTimeout: 10000,
       charset: 'utf8mb4',
     });
+    this.database = database;
     this.connection.on('error', () => {
       this.connection = null;
     });
+  }
+
+  /** 切换当前库：执行 USE `db`，并更新本连接记录 */
+  async useDatabase(database: string): Promise<void> {
+    const safe = database.replace(/`/g, '``');
+    await this.query(`USE \`${safe}\``);
+    this.database = database;
   }
 
   async close(): Promise<void> {
@@ -557,4 +587,172 @@ function serializeRow(row: RowDataPacket): Record<string, unknown> {
 /** 前端回传编辑值时解析：空串=undefined(NULL)，否则原样字符串 */
 export function cellToParam(v: string | null | undefined): string | null {
   return v === null || v === undefined || v === '' ? null : v;
+}
+
+/**
+ * 把整段 SQL 切成若干条"可独立执行"的语句（保持原始顺序与文本）。
+ *
+ * 为什么不能朴素 split(';')：分号会出现在字符串、反引号标识符、行/块注释里，
+ * 更关键的是 CREATE PROCEDURE/FUNCTION/TRIGGER/EVENT 的函数体内部自带分号结尾，
+ * 朴素切分会把一段 routine 定义切碎。因此这里做一个状态机分词器：
+ *   - 引号：'...'（含 '' 转义）、"..."、"`...`"（含 `` 转义）
+ *   - 注释：-- 到行尾、# 到行尾、/* ... *​/
+ *   - 复合体深度：只按 BEGIN(+1)/END(-1) 配对；END IF/END CASE 这类 END<x> 不算
+ *     （routine 正文内部的 ; 在 BEGIN..END 之内，不做语句边界）
+ * 返回每条语句的 text 与在原文中的 [start,end) 区间（用于光标定位所属语句）。
+ */
+export function splitSqlStatements(sql: string): SqlStatement[] {
+  const statements: SqlStatement[] = [];
+  const n = sql.length;
+  let i = 0;
+  let stmtStart = 0; // 当前语句起点（用于定位）
+  let pending = false; // 是否已开始收集一条语句正文
+  let buffer = ''; // 当前语句正文（注释被替换为空白/换行）
+  let depth = 0; // BEGIN..END 复合体深度
+
+  const flush = (end: number) => {
+    const text = buffer.trim();
+    if (text) {
+      statements.push({ text, start: stmtStart, end });
+    }
+    buffer = '';
+    pending = false;
+  };
+
+  const isWordChar = (c: string): boolean => /[A-Za-z0-9_$]/.test(c);
+  const peekUpperWord = (): string => {
+    let j = i;
+    while (j < n && isWordChar(sql[j])) j += 1;
+    return sql.slice(i, j).toUpperCase();
+  };
+  // 跳过一段空白与注释；调用前 i 停留在应跳过的内容
+  const skipWsAndComments = (): void => {
+    for (;;) {
+      while (i < n && /\s/.test(sql[i])) i += 1;
+      if (i + 1 < n && sql[i] === '-' && sql[i + 1] === '-') {
+        while (i < n && sql[i] !== '\n') i += 1;
+        continue;
+      }
+      if (i < n && sql[i] === '#') {
+        while (i < n && sql[i] !== '\n') i += 1;
+        continue;
+      }
+      if (i + 1 < n && sql[i] === '/' && sql[i + 1] === '*') {
+        i += 2;
+        while (i + 1 < n && !(sql[i] === '*' && sql[i + 1] === '/')) i += 1;
+        i = Math.min(i + 2, n);
+        continue;
+      }
+      break;
+    }
+  };
+
+  while (i < n) {
+    // 一条语句结束、准备开始下一条前：清理空白/注释并定位起点
+    if (!pending) {
+      skipWsAndComments();
+      stmtStart = i;
+      if (i >= n) break;
+      pending = true;
+      continue;
+    }
+
+    const c = sql[i];
+    const next = i + 1 < n ? sql[i + 1] : '';
+    // 语句边界：深度为 0 时遇到分号
+    if (depth === 0 && c === ';') {
+      flush(i);
+      i += 1;
+      continue;
+    }
+
+    // 单引号 / 双引号字符串
+    if (c === "'" || c === '"') {
+      const quote = c;
+      buffer += c;
+      i += 1;
+      while (i < n) {
+        if (sql[i] === '\\' && i + 1 < n) {
+          buffer += sql[i] + sql[i + 1];
+          i += 2;
+          continue;
+        }
+        if (sql[i] === quote) {
+          if (i + 1 < n && sql[i + 1] === quote) {
+            buffer += sql[i] + sql[i + 1];
+            i += 2;
+            continue;
+          }
+          buffer += quote;
+          i += 1;
+          break;
+        }
+        buffer += sql[i];
+        i += 1;
+      }
+      continue;
+    }
+    // 反引号标识符
+    if (c === '`') {
+      buffer += c;
+      i += 1;
+      while (i < n) {
+        if (sql[i] === '`') {
+          if (i + 1 < n && sql[i + 1] === '`') {
+            buffer += '``';
+            i += 2;
+            continue;
+          }
+          buffer += '`';
+          i += 1;
+          break;
+        }
+        buffer += sql[i];
+        i += 1;
+      }
+      continue;
+    }
+    // 行/块注释：保留空白结构，不进入语句正文
+    if (c === '-' && next === '-') {
+      while (i < n && sql[i] !== '\n') i += 1;
+      buffer += '\n';
+      continue;
+    }
+    if (c === '#') {
+      while (i < n && sql[i] !== '\n') i += 1;
+      buffer += '\n';
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      buffer += ' ';
+      i += 2;
+      while (i + 1 < n && !(sql[i] === '*' && sql[i + 1] === '/')) i += 1;
+      i = Math.min(i + 2, n);
+      continue;
+    }
+    // 复合体 BEGIN/END 配对（只影响语句边界，不影响引号/注释判定）
+    if (isWordChar(c)) {
+      const word = peekUpperWord();
+      if (word === 'BEGIN') {
+        depth += 1;
+      } else if (word === 'END') {
+        // END 后紧跟 IF/CASE/LOOP/REPEAT/WHILE 时属于嵌套构造收尾，不计入 BEGIN 配对
+        let j = i + word.length;
+        while (j < n && /\s/.test(sql[j])) j += 1;
+        const after = sql.slice(j).match(/^(IF|CASE|LOOP|REPEAT|WHILE)\b/i);
+        if (!after) {
+          if (depth > 0) depth -= 1;
+        }
+      }
+      buffer += sql.slice(i, i + word.length);
+      i += word.length;
+      continue;
+    }
+    buffer += c;
+    i += 1;
+  }
+  if (pending && buffer.trim()) {
+    flush(n);
+  }
+  return statements;
 }

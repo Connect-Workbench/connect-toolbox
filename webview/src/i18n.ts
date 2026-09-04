@@ -43,6 +43,14 @@ const enMessages = {
   sqlFilterTitle: 'SQL filter condition; press Enter to apply',
   sqlFilterInput: 'SQL filter condition input',
   sqlFilterPlaceholder: "Enter SQL condition, e.g. status = 'active' AND (score > 80 OR name LIKE '%test%')",
+  queryEmpty: 'Run a query from a Connect Toolbox SQL editor; results appear here.',
+  queryDatabase: 'Database',
+  queryNoResult: 'No result',
+  queryAffected: '{count} row(s) affected · {duration} ms',
+  queryRows: '{count} row(s) · {duration} ms',
+  queryStatementFailed: 'Statement {index} failed: {message}',
+  queryError: 'Error: {message}',
+  queryStatement: 'Statement {index}',
 } as const;
 
 type MessageKey = keyof typeof enMessages;
@@ -88,6 +96,14 @@ const zhMessages: Record<MessageKey, string> = {
   sqlFilterTitle: 'SQL 过滤条件，按 Enter 应用',
   sqlFilterInput: 'SQL 过滤条件输入框',
   sqlFilterPlaceholder: "输入 SQL 条件，例如 status = 'active' AND (score > 80 OR name LIKE '%test%')",
+  queryEmpty: '从 Connect Toolbox 的 SQL 编辑器执行查询后，结果会显示在这里。',
+  queryDatabase: '数据库',
+  queryNoResult: '无结果',
+  queryAffected: '影响 {count} 行 · 耗时 {duration} ms',
+  queryRows: '返回 {count} 行 · 耗时 {duration} ms',
+  queryStatementFailed: '第 {index} 条语句执行失败：{message}',
+  queryError: '错误：{message}',
+  queryStatement: '语句 {index}',
 };
 
 export function normalizeLocale(language: string | undefined): Locale {

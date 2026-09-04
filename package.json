@@ -2,7 +2,7 @@
   "name": "connect-toolbox",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.3.0",
+  "version": "0.3.3",
   "publisher": "connect-workbench",
   "license": "MIT",
   "icon": "resources/branding/connect-workbench-extension-icon.png",
@@ -63,6 +63,21 @@
         "command": "connectToolbox.openQueryPanel",
         "title": "%command.openQueryPanel%",
         "icon": "$(notebook-execute)"
+      },
+      {
+        "command": "connectToolbox.openQueryOnDatabase",
+        "title": "%command.openQueryOnDatabase%",
+        "icon": "$(notebook-execute)"
+      },
+      {
+        "command": "connectToolbox.runSql",
+        "title": "%command.runSql%",
+        "icon": "$(play)"
+      },
+      {
+        "command": "connectToolbox.runAllSql",
+        "title": "%command.runAllSql%",
+        "icon": "$(run-all)"
       },
       {
         "command": "connectToolbox.openTableData",
@@ -162,6 +177,11 @@
           "group": "inline@4"
         },
         {
+          "command": "connectToolbox.openQueryOnDatabase",
+          "when": "view == connectToolbox.connections && viewItem == mysqlDatabase",
+          "group": "inline@2"
+        },
+        {
           "command": "connectToolbox.openTableData",
           "when": "view == connectToolbox.connections && viewItem == mysqlTable",
           "group": "inline@1"
@@ -186,8 +206,46 @@
           "when": "view == connectToolbox.connections && viewItem =~ /Connection/",
           "group": "9_delete@1"
         }
+      ],
+      "editor/title/run": [
+        {
+          "command": "connectToolbox.runAllSql",
+          "when": "resourceScheme == connecttoolbox-sql && editorLangId == sql",
+          "group": "navigation@1"
+        },
+        {
+          "command": "connectToolbox.runSql",
+          "when": "resourceScheme == connecttoolbox-sql && editorLangId == sql",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "connectToolbox.runSql",
+          "when": "resourceScheme == connecttoolbox-sql && editorLangId == sql",
+          "group": "1_run@1"
+        },
+        {
+          "command": "connectToolbox.runAllSql",
+          "when": "resourceScheme == connecttoolbox-sql && editorLangId == sql",
+          "group": "1_run@2"
+        }
       ]
     },
+    "keybindings": [
+      {
+        "command": "connectToolbox.runSql",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "resourceScheme == connecttoolbox-sql && editorLangId == sql && editorTextFocus"
+      },
+      {
+        "command": "connectToolbox.runAllSql",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "resourceScheme == connecttoolbox-sql && editorLangId == sql && editorTextFocus"
+      }
+    ],
     "configuration": {
       "title": "%configuration.title%",
       "properties": {

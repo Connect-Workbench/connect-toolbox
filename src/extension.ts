@@ -5,6 +5,8 @@ import { SshTunnelManager } from './ssh/SshTunnelManager';
 import { ConnectionTreeProvider, nodeExpandKey } from './providers/ConnectionTreeProvider';
 import { registerDdlProvider } from './providers/ddlProvider';
 import { registerCellEditor } from './providers/cellEditor';
+import { registerSqlEditor } from './webviews/sqlEditor';
+import { registerQueryRunnerCommands } from './webviews/queryRunner';
 import { registerCommands } from './commands/registerCommands';
 // import { restorePanels } from './commands/panelRegistry';
 import { initLogger, info, error } from './utils/logger';
@@ -38,6 +40,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerDdlProvider(context);
   registerCellEditor(context);
+  registerSqlEditor(context);
+  registerQueryRunnerCommands(context, store, manager);
   registerCommands(context, store, manager, tree);
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(event => {

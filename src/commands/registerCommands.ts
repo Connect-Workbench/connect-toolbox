@@ -3,10 +3,10 @@ import { ConnectionConfig, TYPE_LABELS } from '../connection/types';
 import { ConnectionStore } from '../connection/ConnectionStore';
 import { ConnectionManager } from '../connection/ConnectionManager';
 import { ConnectionNode, ConnectionTreeProvider } from '../providers/ConnectionTreeProvider';
-import { MysqlTableNode } from '../providers/nodes';
+import { MysqlDatabaseNode, MysqlTableNode } from '../providers/nodes';
 import { SshTerminal } from '../ssh/SshTerminal';
 import { showConnectionForm } from '../webviews/connectionForm';
-import { openQueryPanel } from '../webviews/queryPanel';
+import { openSqlEditor } from '../webviews/sqlEditor';
 import { openSettingsPanel } from '../webviews/settingsPanel';
 import { openTablePanel } from '../webviews/tablePanel';
 import { runFilter } from './filterCommands';
@@ -121,6 +121,7 @@ export function registerCommands(
 
   // ---------- MySQL ----------
 
+  /** 连接级查询：打开真实 .sql 编辑器（不预选库） */
   register('openQueryPanel', async (node?: ConnectionNode) => {
     const config =
       node && node.config.type === 'mysql'
@@ -134,7 +135,29 @@ export function registerCommands(
       return;
     }
     void rememberPanel(store, { type: 'query', connId: config.id, connName: config.name });
-    openQueryPanel(context, manager, config);
+    await openSqlEditor(config, undefined);
+  });
+
+  /** 库级查询：打开真实 .sql 编辑器并预选该库（执行前 USE） */
+  register('openQueryOnDatabase', async (node?: MysqlDatabaseNode) => {
+    if (!node) {
+      return;
+    }
+    const config = store.get(node.connectionId);
+    if (!config) {
+      return;
+    }
+    if (manager.getStatus(node.connectionId) !== 'connected') {
+      vscode.window.showWarningMessage(t('mysqlNotConnected'));
+      return;
+    }
+    void rememberPanel(store, {
+      type: 'query',
+      connId: config.id,
+      connName: config.name,
+      database: node.database,
+    });
+    await openSqlEditor(config, node.database);
   });
 
   register('openTableData', async (node?: MysqlTableNode) => {

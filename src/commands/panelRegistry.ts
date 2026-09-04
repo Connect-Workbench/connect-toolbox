@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { RecentPanel, ConnectionStore } from '../connection/ConnectionStore';
 import { ConnectionManager } from '../connection/ConnectionManager';
-import { openQueryPanel } from '../webviews/queryPanel';
+import { openSqlEditor } from '../webviews/sqlEditor';
 import { openTablePanel } from '../webviews/tablePanel';
 import { t } from '../i18n';
 
@@ -46,7 +46,7 @@ export async function restorePanels(
         continue;
       }
       if (p.type === 'query') {
-        openQueryPanel(context, manager, config);
+        await openSqlEditor(config, p.database);
       } else if (p.type === 'table' && p.database && p.table) {
         openTablePanel(context, manager, config, p.database, p.table);
       }

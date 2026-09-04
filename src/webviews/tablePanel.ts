@@ -280,7 +280,7 @@ window.$RefreshReg$ = () => {}
 window.$RefreshSig$ = () => (type) => type
 window.__vite_plugin_react_preamble_installed__ = true
 </script>
-<script>window.__connectToolboxLocale = ${JSON.stringify(locale())};</script>
+<script>window.__connectToolboxLocale = ${JSON.stringify(locale())}; window.__connectToolboxPanel = ${JSON.stringify('table')};</script>
 <script type="module" src="${DEV_SERVER}/src/main.tsx?panel=table&db=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}&lang=${encodeURIComponent(locale())}"></script>
 </body>
 </html>`;
@@ -315,7 +315,7 @@ window.__vite_plugin_react_preamble_installed__ = true
   // 注入 panel 参数到入口脚本
   html = html.replace(
     /<script type="module"[^>]*src="([^"]+)"[^>]*><\/script>/,
-    (m, src: string) => `<script>window.__connectToolboxLocale = ${JSON.stringify(locale())};</script>\n<script type="module" src="${src}?panel=table&db=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}&lang=${encodeURIComponent(locale())}"></script>`,
+    (m, src: string) => `<script>window.__connectToolboxLocale = ${JSON.stringify(locale())}; window.__connectToolboxPanel = ${JSON.stringify('table')};</script>\n<script type="module" src="${src}?panel=table&db=${encodeURIComponent(database)}&table=${encodeURIComponent(table)}&lang=${encodeURIComponent(locale())}"></script>`,
   );
 
   return html
