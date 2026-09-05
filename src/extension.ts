@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ConnectionStore } from './connection/ConnectionStore';
 import { ConnectionManager } from './connection/ConnectionManager';
@@ -9,6 +10,7 @@ import { registerSqlEditor } from './webviews/sqlEditor';
 import { registerQueryRunnerCommands } from './webviews/queryRunner';
 import { registerCommands } from './commands/registerCommands';
 // import { restorePanels } from './commands/panelRegistry';
+import { refreshMcpServerLink } from './mcp/paths';
 import { initLogger, info, error } from './utils/logger';
 
 let manager: ConnectionManager | undefined;
@@ -16,6 +18,11 @@ let manager: ConnectionManager | undefined;
 export function activate(context: vscode.ExtensionContext): void {
   initLogger(context);
   info('extension activated');
+  // 扩展激活时刷新 MCP server 软链：扩展升级后版本目录会变化（如 -0.3.0 -> -0.3.3），
+  // 软链需始终指向当前版本目录，否则已粘贴到 MCP 客户端的固定短路径会断链（MODULE_NOT_FOUND）。
+  if (!refreshMcpServerLink(path.join(context.extensionPath, 'dist', 'mcp-server.js'))) {
+    error('refresh MCP server symlink failed', new Error('cannot create ~/.connect-toolbox/mcp-server.js'));
+  }
   const store = new ConnectionStore(context);
   const tunnels = new SshTunnelManager();
   manager = new ConnectionManager(store, tunnels);
