@@ -2,7 +2,7 @@
   "name": "connect-toolbox",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "publisher": "connect-workbench",
   "license": "MIT",
   "icon": "resources/branding/connect-workbench-extension-icon.png",
@@ -280,12 +280,13 @@
   },
   "dependencies": {
     "@connect_workbench/mcp-core": "^0.1.0",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "ag-grid-community": "^36.1.0",
     "mysql2": "^3.23.3",
     "pino": "^10.3.1",
     "sql-formatter": "^15.8.2",
-    "ssh2": "^1.16.0"
+    "ssh2": "^1.16.0",
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

@@ -14,7 +14,7 @@ const options = {
   loader: { '.node': 'file' },
   format: 'cjs',
   platform: 'node',
-  target: 'node18',
+  target: 'node20',
   sourcemap: true,
   logLevel: 'info',
 };

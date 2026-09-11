@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'node:fs';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { McpServer } from '@modelcontextprotocol/server';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
 import { createRuntime, type ConnectionConfig } from '@connect_workbench/mcp-core';
 import { loadMcpConfig } from './config';
@@ -104,10 +104,10 @@ export async function startMcpServer(configPath: string): Promise<void> {
       {
         title: `Execute SQL on ${label}`,
         description: `MySQL 执行 SQL（${label}）`,
-        inputSchema: {
+        inputSchema: z.object({
           sql: z.string().min(1).describe('要执行的 SQL 语句'),
           format: z.enum(['json', 'markdown', 'table']).optional().describe('可选，临时覆盖输出格式'),
-        },
+        }),
       },
       async ({ sql, format }) => {
         try {

@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-09-11
+
+### 变更
+
+- MCP SDK 升级至 v2：`@modelcontextprotocol/sdk@1.30` → `@modelcontextprotocol/server@2.0.0`（含 core 2.0.0），zod 改为显式依赖 `^4.2.0`
+- MCP server 运行要求提升至 Node.js >= 20（node 探测与构建目标同步调整）
+
+### 修复
+
+- MCP server 进程生命周期加固：修复宿主异常退出后的孤儿残留与 CPU 忙循环（PPID 轮询兜底、stdio 断开即退出、强制退出超时）
+- 扩展激活时自动刷新 MCP server 软链，修复扩展升级后软链断链问题
+
 ## [0.3.0] - 2026-09-03
 
 ### 新增

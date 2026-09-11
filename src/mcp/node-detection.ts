@@ -3,8 +3,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-/** MCP server 按 esbuild target node18 构建，运行 node 主版本需 >= 18 */
-const MIN_NODE_MAJOR = 18;
+/** MCP server 按 esbuild target node20 构建（MCP SDK v2 要求 node >= 20），运行 node 主版本需 >= 20 */
+const MIN_NODE_MAJOR = 20;
 
 export interface NodeDetection {
   /** snippet 里 command 字段：'node' 或 nvm 中的绝对路径 */
@@ -78,8 +78,8 @@ function findNvmNodePath(minMajor: number): string | undefined {
 
 /**
  * 探测 MCP 配置片段应使用的 node 命令：
- * 1. PATH 默认 node >= 18 → 直接用 'node'
- * 2. 否则在 nvm 安装目录找 >= 18 的最高版本 → 返回其绝对路径
+ * 1. PATH 默认 node >= 20 → 直接用 'node'
+ * 2. 否则在 nvm 安装目录找 >= 20 的最高版本 → 返回其绝对路径
  * 3. 都没有 → 回退 'node'（可能因版本过低启动失败）
  */
 export function detectNodeCommand(): NodeDetection {
