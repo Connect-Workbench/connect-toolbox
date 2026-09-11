@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Divider, Dropdown, Input, Pagination, Space, Typography, Popover, Checkbox, Select, App as AntApp } from 'antd';
+import { Button, Divider, Dropdown, Input, Modal, Pagination, Radio, Space, Typography, Popover, Checkbox, Select, App as AntApp } from 'antd';
 import type { ColumnsType, ColumnType } from 'antd/es/table';
 import { Table } from 'antd';
 import {
@@ -20,6 +20,7 @@ import {
   CellValue,
   LocalRow,
   PanelMessage,
+  ExportSettings,
   CellEditedPayload,
   FilterOperator,
   FilterSpec,
@@ -409,12 +410,14 @@ const TableSurface = React.memo(function TableSurface({
   loading,
   scrollX,
   tableBodyHeight,
+  selectedKeys,
 }: {
   columns: ColumnsType<LocalRow>;
   rows: LocalRow[];
   loading: boolean;
   scrollX: number;
   tableBodyHeight: number;
+  selectedKeys: Set<string>;
 }): React.JSX.Element {
   const scroll = React.useMemo(() => ({ x: scrollX, y: tableBodyHeight }), [scrollX, tableBodyHeight]);
   return (
@@ -428,7 +431,15 @@ const TableSurface = React.memo(function TableSurface({
       bordered
       tableLayout="fixed"
       scroll={scroll}
-      onRow={getTableRowProps}
+      onRow={(record: LocalRow) => {
+        const base = getTableRowProps(record);
+        if (!selectedKeys.has(record.__key)) return base;
+        return {
+          ...base,
+          className: [base.className, 'ct-row-selected'].filter(Boolean).join(' '),
+          'data-selection-row-selected': 'true',
+        };
+      }}
     />
   );
 });
@@ -483,15 +494,42 @@ export default function TablePanel(): React.JSX.Element {
   const selectionTargetRef = React.useRef<SelectionTarget | null>(null);
   const [tableBodyHeight, setTableBodyHeight] = React.useState(240);
 
-  const clearSelectionDom = React.useCallback(() => {
+  // ---- 多行选中（行号格点击：普通=重置单选 / Ctrl+点击=单行切换 / Shift+点击=连续加选） ----
+  const [selectedRows, setSelectedRows] = React.useState<Set<string>>(new Set());
+  const selectionAnchorRef = React.useRef<string | null>(null);
+  // ---- 导出选中行 ----
+  const [exportOpen, setExportOpen] = React.useState(false);
+  const [exportFormat, setExportFormat] = React.useState<'csv' | 'sql' | 'json'>('csv');
+  const [exportTarget, setExportTarget] = React.useState<'clipboard' | 'folder'>('clipboard');
+  const [exportSqlStyle, setExportSqlStyle] = React.useState<'single' | 'multi'>('single');
+  const [exportIncludeHidden, setExportIncludeHidden] = React.useState(false);
+  // ---- 行号右键菜单（作用于多行选中） ----
+  const [rowMenu, setRowMenu] = React.useState<{ x: number; y: number } | null>(null);
+
+  /** 每次改动立即记忆导出设置（主进程 globalState 持久化，下次打开快速回填） */
+  const persistExportSettings = (patch: Partial<ExportSettings>) => {
+    postMessage({
+      type: 'saveExportSettings',
+      payload: {
+        exportSettings: {
+          format: exportFormat,
+          target: exportTarget,
+          sqlStyle: exportSqlStyle,
+          includeHidden: exportIncludeHidden,
+          ...patch,
+        },
+      },
+    });
+  };
+
+  /** 清除单元格选中高亮（行选中高亮由 React 状态驱动，不在此处理） */
+  const clearCellSelectionDom = React.useCallback(() => {
     const element = selectedElementRef.current;
-    element?.classList.remove('ct-cell-selected', 'ct-row-selected');
+    element?.classList.remove('ct-cell-selected');
     if (element instanceof HTMLElement) {
       delete element.dataset.selectionCellSelected;
-      delete element.dataset.selectionRowSelected;
     }
     selectedElementRef.current = null;
-    selectionTargetRef.current = null;
   }, []);
 
   const { order, visible, widths, marked, toggleVisible, toggleAllVisible, resetOrder, setWidth, toggleMarked } = useColumnPrefs(state?.database ?? '', state?.table ?? '');
@@ -508,7 +546,9 @@ export default function TablePanel(): React.JSX.Element {
         setDrafts([]);
         setEdits({});
         setDeletes({});
-        clearSelectionDom();
+        clearCellSelectionDom();
+        setSelectedRows(new Set());
+        selectionAnchorRef.current = null;
         setCtxMenu(null);
         setHeaderMenu(null);
         const pagePayload = m.payload as PagePayload;
@@ -526,6 +566,13 @@ export default function TablePanel(): React.JSX.Element {
         setError(m.message ?? t('unknownError'));
         setLoading(false);
         setCommitting(false);
+      } else if (m.type === 'exportSettings' && m.payload) {
+        // 主进程下发的记忆导出设置（面板打开时回填）
+        const s = m.payload as ExportSettings;
+        setExportFormat(s.format);
+        setExportTarget(s.target);
+        setExportSqlStyle(s.sqlStyle ?? 'single');
+        setExportIncludeHidden(s.includeHidden);
       } else if (m.type === 'commitResult') {
         setCommitting(false);
         if (m.ok) {
@@ -553,6 +600,7 @@ export default function TablePanel(): React.JSX.Element {
   }, []);
 
   React.useEffect(() => {
+    postMessage({ type: 'getExportSettings', payload: {} });
     loadPage(1, { filters: [], sqlFilter: undefined });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -656,6 +704,13 @@ export default function TablePanel(): React.JSX.Element {
     return result;
   }, [state, drafts, edits, deletes]);
 
+  /** 事件委托处理器内取最新行序（避免闭包捕获旧数组） */
+  const displayRowsRef = React.useRef<LocalRow[]>(displayRows);
+  displayRowsRef.current = displayRows;
+  /** 事件委托处理器内取最新选中集（避免闭包捕获旧状态；不能把 selectedRows 放进 mousedown effect 依赖，否则其函数体的清空逻辑会在每次选中后重跑） */
+  const selectedRowsRef = React.useRef<Set<string>>(selectedRows);
+  selectedRowsRef.current = selectedRows;
+
   const changeCount = drafts.length + Object.keys(edits).length + Object.keys(deletes).length;
   const changeCountRef = React.useRef(changeCount);
   changeCountRef.current = changeCount;
@@ -667,6 +722,9 @@ export default function TablePanel(): React.JSX.Element {
 
   // ---- 行/单元格操作 ----
   React.useEffect(() => {
+    // 数据刷新（翻页/刷新/筛选/排序/提交）后清空多行选中
+    setSelectedRows(new Set());
+    selectionAnchorRef.current = null;
     const area = tableAreaRef.current;
     if (!area) return;
 
@@ -683,17 +741,46 @@ export default function TablePanel(): React.JSX.Element {
       if (!row) return;
 
       if (isRowSelection) {
-        if (selectionTargetRef.current?.kind === 'row'
-          && selectionTargetRef.current.key === key
-          && selectedElementRef.current === row) {
-          setCtxMenu(null);
-          setHeaderMenu(null);
-          return;
+        // 阻止 Shift/Ctrl 点击时浏览器默认的文字拖选
+        event.preventDefault();
+        clearCellSelectionDom();
+        const additive = event.ctrlKey || event.metaKey;
+        if (additive) {
+          // Ctrl/Cmd+点击：单行加入/移出选中集
+          setSelectedRows((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key); else next.add(key);
+            return next;
+          });
+        } else if (event.shiftKey) {
+          // Shift+点击：从锚点行到当前行的连续区间追加进选中集（不清除已选）
+          const rows = displayRowsRef.current;
+          const anchorIdx = selectionAnchorRef.current
+            ? rows.findIndex((r) => r.__key === selectionAnchorRef.current)
+            : 0;
+          const currentIdx = rows.findIndex((r) => r.__key === key);
+          if (currentIdx >= 0) {
+            const start = anchorIdx < 0 ? 0 : Math.min(anchorIdx, currentIdx);
+            const end = anchorIdx < 0 ? currentIdx : Math.max(anchorIdx, currentIdx);
+            setSelectedRows((prev) => {
+              const next = new Set(prev);
+              for (let i = start; i <= end; i++) next.add(rows[i].__key);
+              return next;
+            });
+          }
+        } else if (selectedRowsRef.current.has(key)) {
+          // 普通点击已选行：再次点击取消该行选中（仅剩它时即清空选择）
+          setSelectedRows((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
+          if (selectionAnchorRef.current === key) selectionAnchorRef.current = null;
+        } else {
+          // 普通点击未选行：重置为仅选中该行，并更新锚点
+          setSelectedRows(new Set([key]));
+          selectionAnchorRef.current = key;
         }
-        clearSelectionDom();
-        row.classList.add('ct-row-selected');
-        row.dataset.selectionRowSelected = 'true';
-        selectedElementRef.current = row;
         selectionTargetRef.current = { kind: 'row', key };
       } else {
         const field = cell.dataset.selectionField;
@@ -706,7 +793,7 @@ export default function TablePanel(): React.JSX.Element {
           setHeaderMenu(null);
           return;
         }
-        clearSelectionDom();
+        clearCellSelectionDom();
         cell.classList.add('ct-cell-selected');
         cell.dataset.selectionCellSelected = 'true';
         selectedElementRef.current = cell;
@@ -714,14 +801,15 @@ export default function TablePanel(): React.JSX.Element {
       }
       setCtxMenu(null);
       setHeaderMenu(null);
+      setRowMenu(null);
     };
 
     area.addEventListener('mousedown', onMouseDown);
     return () => {
       area.removeEventListener('mousedown', onMouseDown);
-      clearSelectionDom();
+      clearCellSelectionDom();
     };
-  }, [clearSelectionDom, state]);
+  }, [clearCellSelectionDom, state]);
 
   const rowByKey = React.useCallback(
     (key: string): LocalRow | undefined => displayRows.find((r) => r.__key === key),
@@ -729,10 +817,10 @@ export default function TablePanel(): React.JSX.Element {
   );
 
   const beginEdit = React.useCallback(() => {
-    clearSelectionDom();
+    clearCellSelectionDom();
     setCtxMenu(null);
     setHeaderMenu(null);
-  }, [clearSelectionDom]);
+  }, [clearCellSelectionDom]);
 
   const saveEdit = React.useCallback((key: string, field: string, newVal: string) => {
     const row = rowByKey(key);
@@ -748,32 +836,43 @@ export default function TablePanel(): React.JSX.Element {
     }));
   }, [rowByKey]);
 
-  const copyRow = (key: string) => {
-    const src = rowByKey(key);
-    if (!src) return;
-    const newKey = `d-${Date.now()}`;
-    const draft: LocalRow = {
-      __key: newKey,
-      __status: 'new',
-      __afterIndex: src.__afterIndex,
-      __pkValues: [],
-    };
-    (state?.columns ?? []).forEach((c) => {
-      // 主键列清空（auto_increment 由数据库生成），其余复制
-      draft[c.field] = state?.pkColumns.includes(c.field) ? '' : src[c.field];
+  /** 批量复制为草稿行：主键清空、其余值复制；跳过已删除行（key 带序号防同毫秒冲突） */
+  const copyRows = (keys: string[]) => {
+    const now = Date.now();
+    const newDrafts: LocalRow[] = [];
+    keys.forEach((k, i) => {
+      const src = rowByKey(k);
+      if (!src || src.__status === 'deleted') return;
+      const draft: LocalRow = {
+        __key: `d-${now}-${i}`,
+        __status: 'new',
+        __afterIndex: src.__afterIndex,
+        __pkValues: [],
+      };
+      (state?.columns ?? []).forEach((c) => {
+        // 主键列清空（auto_increment 由数据库生成），其余复制
+        draft[c.field] = state?.pkColumns.includes(c.field) ? '' : src[c.field];
+      });
+      newDrafts.push(draft);
     });
-    setDrafts((prev) => [...prev, draft]);
+    if (newDrafts.length) setDrafts((prev) => [...prev, ...newDrafts]);
   };
 
-  const markDelete = (key: string) => {
-    const row = rowByKey(key);
-    if (!row) return;
-    if (row.__status === 'new') {
-      // 草稿行直接移除
-      setDrafts((prev) => prev.filter((d) => d.__key !== key));
-    } else {
-      setDeletes((prev) => ({ ...prev, [key]: row.__pkValues ?? [] }));
-    }
+  /** 批量标记删除：草稿行直接移除、普通行标记删除、已删除行跳过 */
+  const deleteRows = (keys: string[]) => {
+    const draftKeys = new Set<string>();
+    const markEntries: Record<string, string[]> = {};
+    keys.forEach((k) => {
+      const row = rowByKey(k);
+      if (!row || row.__status === 'deleted') return;
+      if (row.__status === 'new') {
+        draftKeys.add(k);
+      } else {
+        markEntries[k] = row.__pkValues ?? [];
+      }
+    });
+    if (draftKeys.size) setDrafts((prev) => prev.filter((d) => !draftKeys.has(d.__key)));
+    if (Object.keys(markEntries).length) setDeletes((prev) => ({ ...prev, ...markEntries }));
   };
 
   const unmarkDelete = (key: string) => {
@@ -919,6 +1018,53 @@ export default function TablePanel(): React.JSX.Element {
     });
   };
 
+  // ---- 导出选中行 ----
+  const exportColumnFields = React.useMemo(() => {
+    if (!state) return [] as string[];
+    // 包含隐藏列：按表定义原始列序；否则按当前显示顺序仅导出可见列
+    if (exportIncludeHidden) return state.columns.map((c) => c.field);
+    const markedSet = new Set(marked);
+    return [...state.columns]
+      .sort((a, b) => {
+        const ai = order.indexOf(a.field);
+        const bi = order.indexOf(b.field);
+        return (ai < 0 ? 9999 : ai) - (bi < 0 ? 9999 : bi);
+      })
+      .filter((c) => visible[c.field] !== false)
+      .sort((a, b) => Number(markedSet.has(b.field)) - Number(markedSet.has(a.field)))
+      .map((c) => c.field);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, exportIncludeHidden, order, visible, marked]);
+
+  const doExport = () => {
+    if (!state || selectedRows.size === 0) return;
+    const rows = displayRows
+      .filter((r) => selectedRows.has(r.__key))
+      .filter((r) => r.__status !== 'new' && r.__status !== 'deleted')
+      .map((r) => {
+        const out: Record<string, unknown> = {};
+        exportColumnFields.forEach((f) => { out[f] = r[f] ?? null; });
+        return out;
+      });
+    if (rows.length === 0) {
+      msg.warning(t('exportNoExportableRows'));
+      return;
+    }
+    postMessage({
+      type: 'exportRows',
+      payload: {
+        export: {
+          format: exportFormat,
+          target: exportTarget,
+          sqlStyle: exportSqlStyle,
+          columns: exportColumnFields,
+          rows,
+        },
+      },
+    });
+    setExportOpen(false);
+  };
+
   // ---- 右键菜单 ----
   const ctxRow = ctxMenu ? rowByKey(ctxMenu.key) : undefined;
   const ctxCellEdited = !!ctxMenu && !!edits[ctxMenu.key]
@@ -926,14 +1072,10 @@ export default function TablePanel(): React.JSX.Element {
   const canEditCtxCell = !!ctxRow
     && ctxRow.__status !== 'deleted'
     && !isHex(ctxRow[ctxMenu?.field ?? ''] as CellValue);
-  const canDeleteCtxRow = !!ctxRow
-    && ctxRow.__status !== 'new'
-    && ctxRow.__status !== 'deleted';
+  // 复制行/删除行已移至行号右键菜单（支持多行），cell 菜单只保留单元格级操作
   const ctxItems = [
-    { key: 'copy', label: t('copyRow') },
-    // 不能操作的按钮直接不显示（例如删除行不能编辑、新增行不能再次删除）
+    // 不能操作的按钮直接不显示
     ...(canEditCtxCell ? [{ key: 'edit', label: t('editInEditor') }] : []),
-    ...(canDeleteCtxRow ? [{ key: 'delete', label: t('deleteRow') }] : []),
     // 所有撤销操作统一放在菜单最下面
     ...(ctxCellEdited ? [{ key: 'undoEdit', label: t('undoEdit') }] : []),
     ...(ctxRow?.__status === 'new' ? [{ key: 'undoNew', label: t('undoNew') }] : []),
@@ -954,13 +1096,38 @@ export default function TablePanel(): React.JSX.Element {
   const onCtxClick = ({ key }: { key: string }) => {
     if (!ctxMenu) return;
     const { key: rowKey, field } = ctxMenu;
-    if (key === 'copy') copyRow(rowKey);
-    else if (key === 'undoEdit') undoCellEdit(rowKey, field);
+    if (key === 'undoEdit') undoCellEdit(rowKey, field);
     else if (key === 'undoNew') undoNewRow(rowKey);
     else if (key === 'edit') openInEditor(rowKey, field);
-    else if (key === 'delete') markDelete(rowKey);
     else if (key === 'undelete') unmarkDelete(rowKey);
     setCtxMenu(null);
+  };
+  // ---- 行号右键菜单：复制行/删除行/导出行（作用于选中集） ----
+  const selectedOrderedKeys = rowMenu
+    ? displayRows.filter((r) => selectedRows.has(r.__key)).map((r) => r.__key)
+    : [];
+  const operableSelectedKeys = selectedOrderedKeys.filter((k) => {
+    const r = rowByKey(k);
+    return !!r && r.__status !== 'deleted';
+  });
+  const undoDeletedCount = selectedOrderedKeys.filter((k) => rowByKey(k)?.__status === 'deleted').length;
+  const undoNewCount = selectedOrderedKeys.filter((k) => rowByKey(k)?.__status === 'new').length;
+  const rowItems = rowMenu ? [
+    ...(operableSelectedKeys.length ? [{ key: 'copyRows', label: t('copyRows', { count: operableSelectedKeys.length }) }] : []),
+    ...(operableSelectedKeys.length ? [{ key: 'deleteRows', label: t('deleteRows', { count: operableSelectedKeys.length }) }] : []),
+    { key: 'exportRows', label: t('rowMenuExport', { count: selectedOrderedKeys.length }) },
+    // 撤销操作统一放菜单最下面（与 cell 菜单约定一致）
+    ...(undoDeletedCount ? [{ key: 'undoDelete', label: t('undoDeleteRows', { count: undoDeletedCount }) }] : []),
+    ...(undoNewCount ? [{ key: 'undoNew', label: t('undoNewRows', { count: undoNewCount }) }] : []),
+  ] : [];
+  const onRowMenuClick = ({ key }: { key: string }) => {
+    if (!rowMenu) return;
+    if (key === 'copyRows') copyRows(operableSelectedKeys);
+    else if (key === 'deleteRows') deleteRows(operableSelectedKeys);
+    else if (key === 'exportRows') setExportOpen(true);
+    else if (key === 'undoDelete') selectedOrderedKeys.forEach((k) => { if (rowByKey(k)?.__status === 'deleted') unmarkDelete(k); });
+    else if (key === 'undoNew') selectedOrderedKeys.forEach((k) => { if (rowByKey(k)?.__status === 'new') undoNewRow(k); });
+    setRowMenu(null);
   };
   const onHeaderMenuClick = ({ key }: { key: string }) => {
     if (key === 'toggleMark' && headerMenu) {
@@ -991,6 +1158,14 @@ export default function TablePanel(): React.JSX.Element {
           zIndex: 4,
           background: 'var(--vscode-editorGroupHeader-tabsBackground)',
         },
+        onContextMenu: (e: React.MouseEvent) => {
+          // macOS 下 Ctrl+左键 视为右键，会弹出 webview 原生编辑菜单，这里统一拦掉
+          e.preventDefault();
+          e.stopPropagation();
+          setCtxMenu(null);
+          setHeaderMenu(null);
+          setRowMenu(null);
+        },
       }),
       onCell: (row: LocalRow) => ({
         className: [
@@ -1005,6 +1180,18 @@ export default function TablePanel(): React.JSX.Element {
           position: 'sticky',
           left: 0,
           zIndex: 2,
+        },
+        onContextMenu: (e: React.MouseEvent) => {
+          // 行号右键菜单：拦截原生菜单；未选中该行则先单选它（多行操作作用于选中集）
+          e.preventDefault();
+          e.stopPropagation();
+          setCtxMenu(null);
+          setHeaderMenu(null);
+          if (!selectedRowsRef.current.has(row.__key)) {
+            setSelectedRows(new Set([row.__key]));
+            selectionAnchorRef.current = row.__key;
+          }
+          setRowMenu({ x: e.clientX, y: e.clientY });
         },
       }),
       render: (_value: unknown, _row: LocalRow, index: number) => (
@@ -1120,6 +1307,7 @@ export default function TablePanel(): React.JSX.Element {
                 e.preventDefault();
                 e.stopPropagation();
                 setCtxMenu(null);
+                setRowMenu(null);
                 setHeaderMenu({ x: e.clientX, y: e.clientY, field: c.field });
               },
             }),
@@ -1167,10 +1355,11 @@ export default function TablePanel(): React.JSX.Element {
                 onContextMenu: (e: React.MouseEvent) => {
                   e.preventDefault();
                   setHeaderMenu(null);
+                  setRowMenu(null);
                   // 右键也给点中的 cell 加选中态（编辑态下保持不覆盖）
                   const cell = e.currentTarget as HTMLTableCellElement;
                   if (!cell.closest('.ct-cell-editor') && !tableAreaRef.current?.querySelector('.ct-cell-editor')) {
-                    clearSelectionDom();
+                    clearCellSelectionDom();
                     cell.classList.add('ct-cell-selected');
                     cell.dataset.selectionCellSelected = 'true';
                     selectedElementRef.current = cell;
@@ -1247,6 +1436,7 @@ export default function TablePanel(): React.JSX.Element {
           loading={loading}
           scrollX={scrollX}
           tableBodyHeight={tableBodyHeight}
+          selectedKeys={selectedRows}
         />
       </div>
       <div
@@ -1303,9 +1493,58 @@ export default function TablePanel(): React.JSX.Element {
           >
             {t('refresh')}
           </Button>
+          {/* 导出入口已移至行号右键菜单（导出行） */}
           <Typography.Text type={error ? 'danger' : 'secondary'} style={{ fontSize: 12 }}>{error}</Typography.Text>
         </Space>
       </div>
+
+      <Modal
+        title={t('exportTitle')}
+        open={exportOpen}
+        onCancel={() => setExportOpen(false)}
+        onOk={doExport}
+        okText={t('confirm')}
+        cancelText={t('cancel')}
+        okButtonProps={{ disabled: selectedRows.size === 0 }}
+        width={420}
+      >
+        <Space direction="vertical" size={14} style={{ width: '100%' }}>
+          <Typography.Text type="secondary">{t('exportSelectedInfo', { count: selectedRows.size })}</Typography.Text>
+          <div>
+            <Typography.Text strong>{t('exportFormat')}</Typography.Text>
+            <div style={{ marginTop: 4 }}>
+              <Radio.Group value={exportFormat} onChange={(e) => { const v = e.target.value as 'csv' | 'sql' | 'json'; setExportFormat(v); persistExportSettings({ format: v }); }}>
+                <Radio value="csv">{t('exportFormatCsv')}</Radio>
+                <Radio value="sql">{t('exportFormatSql')}</Radio>
+                <Radio value="json">{t('exportFormatJson')}</Radio>
+              </Radio.Group>
+            </div>
+            {exportFormat === 'sql' && (
+              <div style={{ marginTop: 10 }}>
+                <Typography.Text strong>{t('exportSqlStyle')}</Typography.Text>
+                <div style={{ marginTop: 4 }}>
+                  <Radio.Group value={exportSqlStyle} onChange={(e) => { const v = e.target.value as 'single' | 'multi'; setExportSqlStyle(v); persistExportSettings({ sqlStyle: v }); }}>
+                    <Radio value="single">{t('exportSqlSingle')}</Radio>
+                    <Radio value="multi">{t('exportSqlMulti')}</Radio>
+                  </Radio.Group>
+                </div>
+              </div>
+            )}
+          </div>
+          <div>
+            <Typography.Text strong>{t('exportTarget')}</Typography.Text>
+            <div style={{ marginTop: 4 }}>
+              <Radio.Group value={exportTarget} onChange={(e) => { const v = e.target.value as 'clipboard' | 'folder'; setExportTarget(v); persistExportSettings({ target: v }); }}>
+                <Radio value="clipboard">{t('exportTargetClipboard')}</Radio>
+                <Radio value="folder">{t('exportTargetFolder')}</Radio>
+              </Radio.Group>
+            </div>
+          </div>
+          <Checkbox checked={exportIncludeHidden} onChange={(e) => { setExportIncludeHidden(e.target.checked); persistExportSettings({ includeHidden: e.target.checked }); }}>
+            {t('exportIncludeHidden')}
+          </Checkbox>
+        </Space>
+      </Modal>
 
       {ctxMenu && (
         <Dropdown
@@ -1313,6 +1552,16 @@ export default function TablePanel(): React.JSX.Element {
           trigger={[]}
           menu={{ items: ctxItems, onClick: onCtxClick }}
           overlayStyle={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y, zIndex: 1000, minWidth: 130, width: 140 }}
+        >
+          <span />
+        </Dropdown>
+      )}
+      {rowMenu && (
+        <Dropdown
+          open
+          trigger={[]}
+          menu={{ items: rowItems, onClick: onRowMenuClick }}
+          overlayStyle={{ position: 'fixed', left: rowMenu.x, top: rowMenu.y, zIndex: 1000, minWidth: 150, width: 170 }}
         >
           <span />
         </Dropdown>

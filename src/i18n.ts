@@ -132,6 +132,12 @@ const enMessages = {
   settingsCopied: 'Copied to clipboard.',
   settingsNoConfigYet: 'No MCP configuration generated yet. Generate one first.',
   settingsGeneratedAt: 'Generated: {path}',
+  exportNoData: 'No exportable rows selected.',
+  exportCopiedClipboard: '{count} row(s) copied to clipboard.',
+  exportSavedTo: 'Exported to {path}',
+  exportFailed: 'Export failed: {message}',
+
+  exportChooseFolder: 'Choose folder and export',
 } as const;
 
 type MessageKey = keyof typeof enMessages;
@@ -263,6 +269,12 @@ const zhMessages: Record<MessageKey, string> = {
   settingsCopied: '已复制到剪贴板',
   settingsNoConfigYet: '尚未生成 MCP 配置，请先生成',
   settingsGeneratedAt: '已生成：{path}',
+  exportNoData: '没有可导出的选中行。',
+  exportCopiedClipboard: '已复制 {count} 行到剪贴板。',
+  exportSavedTo: '已导出到 {path}',
+  exportFailed: '导出失败：{message}',
+
+  exportChooseFolder: '选择文件夹并导出',
 };
 
 export function normalizeLocale(language: string | undefined): Locale {

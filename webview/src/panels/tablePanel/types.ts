@@ -65,9 +65,17 @@ export interface PagePayload {
   query?: TableQuery;
 }
 
+/** 导出设置（用户上次在导出面板的选择，主进程 globalState 持久化） */
+export interface ExportSettings {
+  format: 'csv' | 'sql' | 'json';
+  target: 'clipboard' | 'folder';
+  sqlStyle: 'single' | 'multi';
+  includeHidden: boolean;
+}
+
 export interface PanelMessage {
-  type: 'page' | 'error' | 'commitResult' | 'cellEdited';
-  payload?: PagePayload | CellEditedPayload;
+  type: 'page' | 'error' | 'commitResult' | 'cellEdited' | 'exportSettings';
+  payload?: PagePayload | CellEditedPayload | ExportSettings;
   message?: string;
   ok?: boolean;
 }

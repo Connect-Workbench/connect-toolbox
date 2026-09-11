@@ -10,8 +10,17 @@ import { locale, t } from '../i18n';
 
 const PAGE_SIZE = 50;
 
+/** 用户在导出面板的选择（globalState 持久化，下次打开快速回填） */
+interface ExportSettings {
+  format: 'csv' | 'sql' | 'json';
+  target: 'clipboard' | 'folder';
+  sqlStyle?: 'single' | 'multi';
+  includeHidden: boolean;
+}
+
 interface PanelMessage {
-  type: 'loadPage' | 'updateCell' | 'deleteRow' | 'addRow' | 'commit' | 'dirty' | 'editCell';
+  type: 'loadPage' | 'updateCell' | 'deleteRow' | 'addRow' | 'commit' | 'dirty' | 'editCell' | 'exportRows'
+    | 'getExportSettings' | 'saveExportSettings';
   payload: {
     page?: number;
     pkValues?: unknown[];
@@ -28,8 +37,98 @@ interface PanelMessage {
     rowKey?: string;
     field?: string;
     value?: string;
+    export?: ExportRequest;
+    exportSettings?: ExportSettings;
   };
 }
+
+interface ExportRequest {
+  format: 'csv' | 'sql' | 'json';
+  target: 'clipboard' | 'folder';
+  /** 仅 format === 'sql' 时有意义：单条多值 INSERT 或每行一条 INSERT */
+  sqlStyle?: 'single' | 'multi';
+  columns: string[];
+  rows: Record<string, unknown>[];
+}
+
+const EXPORT_FOLDER_KEY = 'connectToolbox.tableExport.lastFolder';
+const EXPORT_SETTINGS_KEY = 'connectToolbox.tableExport.settings';
+
+/** 导出文件名时间戳：yyyyMMdd-HHmmss（本地时间） */
+function exportTimestamp(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+/** 单元格 → 文本（CSV 用）：NULL→空，hex→0x… */
+function exportCellText(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object' && (value as { __type?: string }).__type === 'hex') {
+    return '0x' + String((value as { value: unknown }).value);
+  }
+  return String(value);
+}
+
+function csvEscape(text: string): string {
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** 单元格 → SQL 字面量：NULL / 数字 / 0x… / 转义字符串 */
+function sqlLiteral(value: unknown): string {
+  if (value === null || value === undefined) return 'NULL';
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'object' && (value as { __type?: string }).__type === 'hex') {
+    return '0x' + String((value as { value: unknown }).value);
+  }
+  return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
+}
+
+function buildExportContent(
+  format: ExportRequest['format'],
+  columns: string[],
+  rows: Record<string, unknown>[],
+  database: string,
+  table: string,
+  sqlStyle: ExportRequest['sqlStyle'],
+): string {
+  if (format === 'csv') {
+    const lines = [columns.map(csvEscape).join(',')];
+    for (const row of rows) {
+      lines.push(columns.map((c) => csvEscape(exportCellText(row[c]))).join(','));
+    }
+    // UTF-8 BOM：Excel 直接打开中文不乱码
+    return '\uFEFF' + lines.join('\r\n');
+  }
+  if (format === 'json') {
+    const data = rows.map((row) => {
+      const out: Record<string, unknown> = {};
+      columns.forEach((c) => {
+        const v = row[c];
+        out[c] = v === null || v === undefined
+          ? null
+          : typeof v === 'object' && (v as { __type?: string }).__type === 'hex'
+            ? '0x' + String((v as { value: unknown }).value)
+            : v;
+      });
+      return out;
+    });
+    return JSON.stringify(data, null, 2);
+  }
+  // sql：单条 = 多值合并 INSERT；多条 = 每行一条 INSERT
+  const columnList = columns.map((c) => `\`${c.replace(/`/g, '``')}\``).join(', ');
+  const qualified = qualifiedTable(database, table);
+  if (sqlStyle === 'multi') {
+    const statements = rows
+      .map((row) => `INSERT INTO ${qualified} (${columnList}) VALUES (${columns.map((c) => sqlLiteral(row[c])).join(', ')});`)
+      .join('\n');
+    return `${statements}\n`;
+  }
+  const valueList = rows.map((row) => `(${columns.map((c) => sqlLiteral(row[c])).join(', ')})`);
+  return `INSERT INTO ${qualified} (${columnList}) VALUES\n${valueList.join(',\n')};\n`;
+}
+
+
 
 interface PagePayload {
   connectionName: string;
@@ -205,6 +304,52 @@ export function openTablePanel(
             params,
           );
           await sendPage(page ?? 1, currentQuery);
+          return;
+        }
+        case 'getExportSettings': {
+          // 面板打开时下发记忆的导出设置（无记忆则不回填，webview 保持默认值）
+          const settings = context.globalState.get<ExportSettings>(EXPORT_SETTINGS_KEY);
+          panel.webview.postMessage({ type: 'exportSettings', payload: settings ?? undefined });
+          return;
+        }
+        case 'saveExportSettings': {
+          // 用户每次改动导出面板选项时即时保存
+          const settings = msg.payload.exportSettings;
+          if (settings) await context.globalState.update(EXPORT_SETTINGS_KEY, settings);
+          return;
+        }
+        case 'exportRows': {
+          const req = msg.payload.export;
+          if (!req || !req.columns?.length || !req.rows?.length) {
+            sendError(t('exportNoData'));
+            return;
+          }
+          try {
+            const content = buildExportContent(req.format, req.columns, req.rows, database, table, req.sqlStyle);
+            const fileName = `${table}-export-${exportTimestamp()}.${req.format}`;
+            if (req.target === 'clipboard') {
+              await vscode.env.clipboard.writeText(content);
+              vscode.window.showInformationMessage(t('exportCopiedClipboard', { count: req.rows.length }));
+              return;
+            }
+            // folder：记住上次选择的文件夹（globalState）
+            const lastFolder = context.globalState.get<string>(EXPORT_FOLDER_KEY);
+            const picks = await vscode.window.showOpenDialog({
+              canSelectFolders: true,
+              canSelectFiles: false,
+              canSelectMany: false,
+              defaultUri: lastFolder ? vscode.Uri.file(lastFolder) : undefined,
+              openLabel: t('exportChooseFolder'),
+            });
+            if (!picks?.length) return;
+            const dir = picks[0].fsPath;
+            await context.globalState.update(EXPORT_FOLDER_KEY, dir);
+            const filePath = path.join(dir, fileName);
+            await fs.promises.writeFile(filePath, content, 'utf8');
+            vscode.window.showInformationMessage(t('exportSavedTo', { path: filePath }));
+          } catch (err) {
+            sendError(t('exportFailed', { message: (err as Error).message }));
+          }
           return;
         }
         case 'editCell': {
