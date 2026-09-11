@@ -69,7 +69,16 @@ The current version is `0.1.2` and the minimum supported VS Code version is `1.8
   - Combines with column-header filters using `AND`.
   - Press `Enter` to apply the condition; clear the text and press `Enter` to remove it.
 - Double-click cells for inline editing.
-- Copy, add, modify, mark for deletion, and undo local row/cell operations.
+- Add, modify, mark for deletion, and undo local row/cell operations; row-level batch actions (copy rows, delete rows, export rows, undo) live in the row-number context menu.
+- Multi-row selection: click a row number to select it (click again to deselect), `Ctrl/⌘ + click` to add or remove single rows, `Shift + click` to select a contiguous range from the anchor row; the selection clears on pagination, refresh, filtering, sorting, and commit.
+- The row-number context menu operates on the selected rows (single or multi): copy rows, delete rows, export rows, undo delete, and undo new.
+- Export selected rows as CSV / SQL / JSON:
+  - CSV includes a UTF-8 BOM so Chinese text opens correctly in Excel.
+  - SQL supports either one multi-values INSERT or one INSERT per row.
+  - Copy to clipboard or save to a folder (the last used folder is remembered).
+  - Optionally include hidden columns (visible columns only, in display order, by default).
+  - Draft rows and rows marked for deletion are excluded; exported values include uncommitted local edits.
+- Export panel choices (format, target, INSERT style, include hidden columns) are remembered instantly and restored the next time the panel opens.
 - Open cell content in a VS Code editor and synchronize it back to the table draft.
 - Submit staged inserts, updates, and deletes through one commit action.
 - Use a transaction for batch writes: commit only when all operations succeed; roll back on failure.
