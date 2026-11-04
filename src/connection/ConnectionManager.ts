@@ -3,11 +3,13 @@ import { ConnectionConfig, ConnectionStatus } from './types';
 import { ConnectionStore } from './ConnectionStore';
 import { SshSession } from '../ssh/SshSession';
 import { SshTunnelManager } from '../ssh/SshTunnelManager';
+import { SqlClient } from '../clients/SqlClient';
 import { MySqlClient } from '../clients/MySqlClient';
+import { ClickHouseClient, rewriteEndpoint } from '../clients/ClickHouseClient';
 import { info, error } from '../utils/logger';
 
-interface MySqlSession {
-  client: MySqlClient;
+interface SqlSession {
+  client: SqlClient;
   /** 走隧道时的远端目标（用于断开时释放隧道） */
   tunnelInfo?: { sshId: string; host: string; port: number };
 }
@@ -15,12 +17,12 @@ interface MySqlSession {
 /**
  * 连接生命周期管理：
  * - SSH 连接建立会话（远程终端/隧道）
- * - MySQL 连接建立客户端（直连或经 SSH 隧道）
+ * - SQL 类连接（MySQL / ClickHouse）建立客户端（直连或经 SSH 隧道）
  * - Redis 留待 M3
  */
 export class ConnectionManager {
   private readonly sshSessions = new Map<string, SshSession>();
-  private readonly mySqlSessions = new Map<string, MySqlSession>();
+  private readonly sqlSessions = new Map<string, SqlSession>();
   private readonly statuses = new Map<string, ConnectionStatus>();
 
   private readonly _onDidChangeStatus = new vscode.EventEmitter<string>();
@@ -40,8 +42,9 @@ export class ConnectionManager {
     return this.sshSessions.get(id);
   }
 
-  getMySqlClient(id: string): MySqlClient | undefined {
-    return this.mySqlSessions.get(id)?.client;
+  /** 按连接 id 取 SQL 客户端（MySQL / ClickHouse 统一入口） */
+  getSqlClient(id: string): SqlClient | undefined {
+    return this.sqlSessions.get(id)?.client;
   }
 
   private setStatus(id: string, status: ConnectionStatus): void {
@@ -60,7 +63,25 @@ export class ConnectionManager {
       return;
     }
     if (config.type === 'mysql') {
-      await this.connectMySql(config);
+      await this.connectSql(config, async (host, port) => {
+        const password = config.passwordRef
+          ? await this.store.getSecret(config.passwordRef)
+          : undefined;
+        return new MySqlClient(host, port, config.username ?? 'root', password);
+      });
+      return;
+    }
+    if (config.type === 'clickhouse') {
+      await this.connectSql(config, async (host, port) => {
+        const password = config.passwordRef
+          ? await this.store.getSecret(config.passwordRef)
+          : undefined;
+        // 走隧道时 host/port 已被替换为本地转发端口，URL 里的目标地址同步改写
+        const endpoint = config.url
+          ? rewriteEndpoint(config.url, host, port)
+          : `http://${host}:${port}`;
+        return new ClickHouseClient(endpoint, config.username ?? 'default', password);
+      });
       return;
     }
     throw new Error('Redis 客户端将在后续里程碑（M3）提供');
@@ -85,15 +106,22 @@ export class ConnectionManager {
     }
   }
 
-  private async connectMySql(config: ConnectionConfig): Promise<void> {
-    if (this.mySqlSessions.has(config.id)) {
+  /**
+   * SQL 类连接的通用建立流程：必要时先建隧道，再创建具体客户端。
+   * 失败时清理本次建立的隧道与客户端。
+   */
+  private async connectSql(
+    config: ConnectionConfig,
+    createClient: (host: string, port: number) => Promise<SqlClient>,
+  ): Promise<void> {
+    if (this.sqlSessions.has(config.id)) {
       return;
     }
     this.setStatus(config.id, 'connecting');
     try {
       let host = config.host;
       let port = config.port;
-      let tunnelInfo: MySqlSession['tunnelInfo'];
+      let tunnelInfo: SqlSession['tunnelInfo'];
 
       if (config.viaSsh) {
         if (!config.sshConnectionId) {
@@ -114,20 +142,23 @@ export class ConnectionManager {
         tunnelInfo = { sshId: sshConfig.id, host: config.host, port: config.port };
       }
 
-      const password = config.passwordRef
-        ? await this.store.getSecret(config.passwordRef)
-        : undefined;
-      const client = new MySqlClient(host, port, config.username ?? 'root', password);
+      const client = await createClient(host, port);
       await client.connect();
 
-      this.mySqlSessions.set(config.id, { client, tunnelInfo });
+      this.sqlSessions.set(config.id, { client, tunnelInfo });
       this.setStatus(config.id, 'connected');
-      info('mysql connected', config.name, 'via', config.viaSsh ? `ssh tunnel -> ${config.host}:${config.port}` : `direct ${config.host}:${config.port}`);
+      info(
+        `${config.type} connected`,
+        config.name,
+        'via',
+        config.viaSsh
+          ? `ssh tunnel -> ${config.host}:${config.port}`
+          : `direct ${config.host}:${config.port}`,
+      );
     } catch (err) {
-      // 失败时清理本次建立的隧道与客户端
       await this.disconnect(config.id);
       this.setStatus(config.id, 'error');
-      error('mysql connect failed', config.name, (err as Error).message);
+      error(`${config.type} connect failed`, config.name, (err as Error).message);
       throw err;
     }
   }
@@ -137,18 +168,18 @@ export class ConnectionManager {
     // SSH
     this.sshSessions.get(id)?.disconnect();
     this.sshSessions.delete(id);
-    // MySQL
-    const mysqlSession = this.mySqlSessions.get(id);
-    if (mysqlSession) {
-      await mysqlSession.client.close();
-      if (mysqlSession.tunnelInfo) {
+    // SQL
+    const sqlSession = this.sqlSessions.get(id);
+    if (sqlSession) {
+      await sqlSession.client.close();
+      if (sqlSession.tunnelInfo) {
         await this.tunnels.release(
-          mysqlSession.tunnelInfo.sshId,
-          mysqlSession.tunnelInfo.host,
-          mysqlSession.tunnelInfo.port,
+          sqlSession.tunnelInfo.sshId,
+          sqlSession.tunnelInfo.host,
+          sqlSession.tunnelInfo.port,
         );
       }
-      this.mySqlSessions.delete(id);
+      this.sqlSessions.delete(id);
     }
     if (config) {
       this.setStatus(id, 'disconnected');
@@ -160,10 +191,10 @@ export class ConnectionManager {
       session.disconnect();
     }
     this.sshSessions.clear();
-    for (const [, mysqlSession] of this.mySqlSessions) {
-      await mysqlSession.client.close();
+    for (const [, sqlSession] of this.sqlSessions) {
+      await sqlSession.client.close();
     }
-    this.mySqlSessions.clear();
+    this.sqlSessions.clear();
     this.statuses.clear();
     await this.tunnels.closeAll();
   }

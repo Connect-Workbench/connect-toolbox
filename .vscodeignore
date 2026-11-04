@@ -8,6 +8,7 @@ webview/index.html
 node_modules/ssh2/**
 node_modules/mysql2/**
 node_modules/sql-formatter/**
+node_modules/@clickhouse/client/**
 node_modules/ag-grid-community/dist/ag-grid-community.js
 node_modules/ag-grid-community/dist/ag-grid-community.noStyle.js
 node_modules/ag-grid-community/dist/ag-grid-community.min.noStyle.js

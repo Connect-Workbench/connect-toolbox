@@ -153,7 +153,7 @@
       "view/item/context": [
         {
           "command": "connectToolbox.connect",
-          "when": "view == connectToolbox.connections && viewItem =~ /^(mysql|redis|ssh)Connection$/",
+          "when": "view == connectToolbox.connections && viewItem =~ /^(mysql|clickhouse|redis|ssh)Connection$/",
           "group": "inline@1"
         },
         {
@@ -168,12 +168,12 @@
         },
         {
           "command": "connectToolbox.openQueryPanel",
-          "when": "view == connectToolbox.connections && viewItem == mysqlConnectionConnected",
+          "when": "view == connectToolbox.connections && viewItem =~ /^(mysql|clickhouse)ConnectionConnected$/",
           "group": "inline@3"
         },
         {
           "command": "connectToolbox.filterTree",
-          "when": "view == connectToolbox.connections && viewItem =~ /^(mysqlConnectionConnected|mysqlDatabase)$/",
+          "when": "view == connectToolbox.connections && viewItem =~ /^(mysql|clickhouse)ConnectionConnected$|^mysqlDatabase$/",
           "group": "inline@4"
         },
         {
@@ -193,7 +193,7 @@
         },
         {
           "command": "connectToolbox.refresh",
-          "when": "view == connectToolbox.connections && viewItem =~ /^(mysqlConnection|mysqlDatabase|mysqlTable)/",
+          "when": "view == connectToolbox.connections && viewItem =~ /^(mysql|clickhouse)Connection|mysqlDatabase|mysqlTable/",
           "group": "9_refresh@1"
         },
         {
@@ -275,10 +275,13 @@
     "dev:webview": "cd webview && npm run dev",
     "typecheck": "tsc --noEmit",
     "typecheck:webview": "cd webview && npm run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "mcp": "node dist/mcp-server.js",
     "package": "npm run build && vsce package"
   },
   "dependencies": {
+    "@clickhouse/client": "^1.24.1",
     "@connect_workbench/mcp-core": "^0.1.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "ag-grid-community": "^36.1.0",
@@ -294,6 +297,7 @@
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.24.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^3.2.7"
   }
 }

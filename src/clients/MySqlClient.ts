@@ -1,93 +1,96 @@
-import mysql, { Connection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import mysql, {
+  FieldPacket,
+  Pool,
+  PoolConnection,
+  RowDataPacket,
+  ResultSetHeader,
+} from 'mysql2/promise';
 import { format } from 'sql-formatter';
 
-export interface QueryResult {
-  columns: string[];
-  rows: Record<string, unknown>[];
-  /** 影响行数（INSERT/UPDATE/DELETE） */
-  affectedRows?: number;
-  /** 自增主键（INSERT） */
-  insertId?: number;
-  durationMs: number;
+// 公共类型定义在 SqlClient.ts，这里重新导出以兼容原有导入路径
+export type {
+  ColumnInfo,
+  IndexInfo,
+  QueryResult,
+  SqlStatement,
+  TableFilter,
+  TableFilterOperator,
+  TableInfo,
+  TableQuery,
+} from './SqlClient';
+export { qualifiedTable } from './SqlClient';
+
+import {
+  ClientCapabilities,
+  ColumnInfo,
+  IndexInfo,
+  QueryResult,
+  SqlClient,
+  SqlStatement,
+  TableInfo,
+  TableQuery,
+  qualifiedTable,
+  quoteIdentifier,
+} from './SqlClient';
+import { buildTableQuery } from './tableQuery';
+
+/** 池大小刻意保守，避免给目标实例带来额外的连接压力 */
+const POOL_CONNECTION_LIMIT = 3;
+/** 空闲连接回收时间：越短，被服务端悄悄 kill 的连接被复用的窗口越小 */
+const POOL_IDLE_TIMEOUT_MS = 30_000;
+/** 池中最多保留的空闲连接数 */
+const POOL_MAX_IDLE = 2;
+const CONNECT_TIMEOUT_MS = 10_000;
+
+/** 出现这些错误说明连接已不可用，换一条连接即可恢复 */
+const RETRYABLE_CONNECTION_ERRORS = new Set([
+  'PROTOCOL_CONNECTION_LOST',
+  'PROTOCOL_SEQUENCE_TIMEOUT',
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+]);
+
+/** 只有只读语句允许自动重试；写语句重试可能造成重复写入 */
+const READ_ONLY_KEYWORDS = new Set(['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'TABLE', 'VALUES']);
+
+function isRetryableConnectionError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null | undefined)?.code;
+  return typeof code === 'string' && RETRYABLE_CONNECTION_ERRORS.has(code);
 }
 
-/** 一条待执行的 SQL 语句（分词器切分结果，已去注释与首尾空白） */
-export interface SqlStatement {
-  /** 该语句在原始文本中的内容（保留注释外的原文，便于执行与展示） */
-  text: string;
-  /** 语句在原始文本里的起始偏移（含前导空白/注释，用于前端定位光标所属语句） */
-  start: number;
-  /** 语句文本在原始文本中的结束偏移 */
-  end: number;
+/** 取 SQL 首个关键字（跳过前导空白与注释） */
+function firstKeyword(sql: string): string {
+  const stripped = sql
+    .replace(/^\s+/, '')
+    .replace(/^(?:(?:\/\*[\s\S]*?\*\/)|(?:--[^\n]*(?:\n|$))|(?:#[^\n]*(?:\n|$)))\s*/g, '');
+  const match = /^[A-Za-z]+/.exec(stripped);
+  return match ? match[0].toUpperCase() : '';
 }
 
-export interface TableInfo {
-  name: string;
-  type: 'BASE TABLE' | 'VIEW';
-}
-
-export interface ColumnInfo {
-  field: string;
-  type: string;
-  nullable: boolean;
-  key: string;
-  default: unknown;
-  extra: string;
-}
-
-/** MySQL 原生过滤操作符（值通过预编译参数绑定） */
-export type TableFilterOperator =
-  | '='
-  | '!='
-  | '<>'
-  | '>'
-  | '>='
-  | '<'
-  | '<='
-  | 'LIKE'
-  | 'NOT LIKE'
-  | 'IN'
-  | 'NOT IN'
-  | 'BETWEEN'
-  | 'NOT BETWEEN'
-  | 'REGEXP'
-  | 'NOT REGEXP'
-  | 'IS NULL'
-  | 'IS NOT NULL';
-
-export interface TableFilter {
-  field: string;
-  operator: TableFilterOperator;
-  value?: string;
-}
-
-export interface TableQuery {
-  sort?: { field: string; direction: 'asc' | 'desc' };
-  filters?: TableFilter[];
-  /** 单表 SQL WHERE 条件（不含完整 SELECT） */
-  sqlFilter?: string;
-}
-
-export interface IndexInfo {
-  name: string;
-  columns: string;
-  unique: boolean;
-}
-
-/** 单库内执行 SQL 的前缀（避免依赖当前选中库） */
-export function qualifiedTable(database: string, table: string): string {
-  return `\`${database.replace(/`/g, '``')}\`.\`${table.replace(/`/g, '``')}\``;
+function isReadOnlySql(sql: string): boolean {
+  return READ_ONLY_KEYWORDS.has(firstKeyword(sql));
 }
 
 /**
- * MySQL 客户端封装（单连接）：
+ * MySQL 客户端封装（连接池）：
+ * - 调用方持有的是「池」，底层连接断了由池换一条新的，使用层感知不到单条连接的生命周期
  * - 查询与元数据操作
  * - 结果序列化（Date/Buffer/BigInt → JSON 安全值）
  */
-export class MySqlClient {
-  private connection: Connection | null = null;
-  /** 当前已选中的库（执行 USE 后更新；未 USE 则为 undefined） */
+export class MySqlClient implements SqlClient {
+  /** MySQL 支持表格编辑与事务式批量提交 */
+  readonly capabilities: ClientCapabilities = { editable: true, transactions: true };
+
+  private pool: Pool | null = null;
+  /** 当前期望的库（执行 USE 后更新；未 USE 则为 undefined） */
   private database: string | undefined;
+  /**
+   * 每条池化连接当前实际所在的库。
+   * 连接归还后会继续被其它调用方取走，USE 语义不会被池保留，
+   * 因此每次取连接都要核对，必要时重新 USE。
+   */
+  private readonly connectionDatabase = new WeakMap<PoolConnection, string>();
 
   constructor(
     private readonly host: string,
@@ -97,7 +100,7 @@ export class MySqlClient {
   ) {}
 
   get connected(): boolean {
-    return this.connection !== null;
+    return this.pool !== null;
   }
 
   /** 当前生效的库（连接层默认库或最近一次 USE 的库），可能为 undefined */
@@ -106,57 +109,105 @@ export class MySqlClient {
   }
 
   /**
-   * 建立连接。database 可选：传入则连接时直接选定该库（createConnection({ database })），
-   * 否则连接处于"未选库"状态（靠 USE 或 SQL 里写全限定名）。
+   * 建立连接池。database 可选：传入则新建连接直接选定该库。
+   * createPool 本身是惰性的，这里主动取一条连接 ping 一次，
+   * 保证「连接成功」是确实连上过，而不是创建了一个空池就宣布成功。
    */
   async connect(database?: string): Promise<void> {
-    if (this.connection) {
+    if (this.pool) {
       return;
     }
-    this.connection = await mysql.createConnection({
+    const pool = mysql.createPool({
       host: this.host,
       port: this.port,
       user: this.user,
       password: this.password,
       database,
+      connectionLimit: POOL_CONNECTION_LIMIT,
+      maxIdle: POOL_MAX_IDLE,
+      idleTimeout: POOL_IDLE_TIMEOUT_MS,
+      waitForConnections: true,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 10_000,
       supportBigNumbers: true,
-      connectTimeout: 10000,
+      connectTimeout: CONNECT_TIMEOUT_MS,
       charset: 'utf8mb4',
     });
+    if (database) {
+      // 新建连接会带上建池时的默认库，先登记，省掉首次查询那次多余的 USE
+      pool.on('connection', conn => {
+        this.connectionDatabase.set(conn as unknown as PoolConnection, database);
+      });
+    }
+    try {
+      const probe = await pool.getConnection();
+      try {
+        await probe.ping();
+      } finally {
+        probe.release();
+      }
+    } catch (err) {
+      await pool.end().catch(() => undefined);
+      throw err;
+    }
+    this.pool = pool;
     this.database = database;
-    this.connection.on('error', () => {
-      this.connection = null;
-    });
   }
 
-  /** 切换当前库：执行 USE `db`，并更新本连接记录 */
+  /**
+   * 切换当前库：在一条连接上执行 USE 校验权限，成功后记录为期望库。
+   * 其它池化连接不在这里逐个切换，取用时按需对齐。
+   */
   async useDatabase(database: string): Promise<void> {
-    const safe = database.replace(/`/g, '``');
-    await this.query(`USE \`${safe}\``);
+    const conn = await this.ensurePool().getConnection();
+    try {
+      await conn.query(`USE ${quoteIdentifier(database)}`);
+      this.connectionDatabase.set(conn, database);
+    } finally {
+      conn.release();
+    }
     this.database = database;
   }
 
   async close(): Promise<void> {
-    if (this.connection) {
-      await this.connection.end().catch(() => undefined);
-      this.connection = null;
+    const pool = this.pool;
+    this.pool = null;
+    this.database = undefined;
+    if (pool) {
+      await pool.end().catch(() => undefined);
     }
   }
 
-  private ensure(): Connection {
-    if (!this.connection) {
+  private ensurePool(): Pool {
+    if (!this.pool) {
       throw new Error('MySQL 未连接');
     }
-    return this.connection;
+    return this.pool;
+  }
+
+  /**
+   * 取一条连接执行操作，保证：
+   * - 该连接所在库与期望库一致（不一致先 USE）
+   * - 无论成功失败都归还连接
+   */
+  private async withConnection<T>(fn: (conn: PoolConnection) => Promise<T>): Promise<T> {
+    const conn = await this.ensurePool().getConnection();
+    try {
+      const target = this.database;
+      if (target && this.connectionDatabase.get(conn) !== target) {
+        await conn.query(`USE ${quoteIdentifier(target)}`);
+        this.connectionDatabase.set(conn, target);
+      }
+      return await fn(conn);
+    } finally {
+      conn.release();
+    }
   }
 
   /** 执行任意 SQL：SELECT 返回结果集；DML/DDL 返回影响行数 */
   async query(sql: string, params?: unknown[]): Promise<QueryResult> {
     const start = Date.now();
-    const conn = this.ensure();
-    const [rows, fields] = params
-      ? await conn.query<RowDataPacket[] | ResultSetHeader>(sql, params)
-      : await conn.query<RowDataPacket[] | ResultSetHeader>(sql);
+    const [rows, fields] = await this.queryWithRetry(sql, params);
 
     if (Array.isArray(rows)) {
       const columns = (fields ?? []).map(f => f.name);
@@ -174,6 +225,31 @@ export class MySqlClient {
       insertId: rows.insertId,
       durationMs: Date.now() - start,
     };
+  }
+
+  /**
+   * 池里的连接可能已被服务端回收（wait_timeout / 网络中断）而池尚未感知，
+   * 此时首次查询会失败。只读语句换一条连接重试一次，对调用方完全透明；
+   * 写语句不重试，避免重复写入。
+   */
+  private async queryWithRetry(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[RowDataPacket[] | ResultSetHeader, FieldPacket[]]> {
+    const run = () =>
+      this.withConnection<[RowDataPacket[] | ResultSetHeader, FieldPacket[]]>(conn =>
+        params
+          ? conn.query<RowDataPacket[] | ResultSetHeader>(sql, params)
+          : conn.query<RowDataPacket[] | ResultSetHeader>(sql),
+      );
+    try {
+      return await run();
+    } catch (err) {
+      if (!isRetryableConnectionError(err) || !isReadOnlySql(sql)) {
+        throw err;
+      }
+      return await run();
+    }
   }
 
   async listDatabases(): Promise<string[]> {
@@ -309,243 +385,86 @@ export class MySqlClient {
     },
     columns: ColumnInfo[],
   ): Promise<{ affected: number }> {
-    const conn = this.ensure();
     const tbl = qualifiedTable(database, table);
     const autoInc = columns.filter(c => /auto_increment/i.test(c.extra)).map(c => c.field);
     let affected = 0;
 
-    await conn.beginTransaction();
-    try {
-      // 1) 删除（先删子引用，按主键）
-      for (const d of ops.deletes) {
-        const where = d.pkValues
-          .map((v, i) => {
-            const col = columns[i]?.field ?? '';
-            return col ? `\`${col.replace(/`/g, '``')}\` = ?` : '';
-          })
-          .filter(Boolean)
-          .join(' AND ');
-        if (where) {
+    // 事务必须全程在同一条连接上完成，因此这里持有一条连接直到提交/回滚
+    return this.withConnection(async conn => {
+      await conn.beginTransaction();
+      try {
+        // 1) 删除（先删子引用，按主键）
+        for (const d of ops.deletes) {
+          const where = d.pkValues
+            .map((v, i) => {
+              const col = columns[i]?.field ?? '';
+              return col ? `\`${col.replace(/`/g, '``')}\` = ?` : '';
+            })
+            .filter(Boolean)
+            .join(' AND ');
+          if (where) {
+            const [r] = await conn.query<ResultSetHeader>(
+              `DELETE FROM ${tbl} WHERE ${where}`,
+              d.pkValues.map(v => cellToParam(v)),
+            );
+            affected += r.affectedRows;
+          }
+        }
+
+        // 2) 修改（按主键定位，仅更新变化的列）
+        for (const u of ops.updates) {
+          const setCols = Object.keys(u.changes);
+          if (setCols.length === 0) {
+            continue;
+          }
+          // 主键列在 changes 中也可能被改：先排除主键（主键修改一般不允许，避免二次定位冲突）
+          const pkCols = columns.filter(c => c.key === 'PRI').map(c => c.field);
+          const finalSet = Object.entries(u.changes).filter(([c]) => !pkCols.includes(c));
+          if (finalSet.length === 0) {
+            continue;
+          }
+          const setSql = finalSet.map(([c]) => `\`${c.replace(/`/g, '``')}\` = ?`).join(', ');
+          const where = pkCols
+            .map(c => `\`${c.replace(/`/g, '``')}\` = ?`)
+            .join(' AND ');
+          if (!where) {
+            continue;
+          }
           const [r] = await conn.query<ResultSetHeader>(
-            `DELETE FROM ${tbl} WHERE ${where}`,
-            d.pkValues.map(v => cellToParam(v)),
+            `UPDATE ${tbl} SET ${setSql} WHERE ${where}`,
+            [...finalSet.map(([, v]) => cellToParam(v)), ...u.pkValues],
           );
           affected += r.affectedRows;
         }
-      }
 
-      // 2) 修改（按主键定位，仅更新变化的列）
-      for (const u of ops.updates) {
-        const setCols = Object.keys(u.changes);
-        if (setCols.length === 0) {
-          continue;
+        // 3) 新增（跳过 auto_increment 列）
+        for (const ins of ops.inserts) {
+          const cols = Object.keys(ins).filter(c => !autoInc.includes(c));
+          if (cols.length === 0) {
+            continue;
+          }
+          const names = cols.map(c => `\`${c.replace(/`/g, '``')}\``).join(', ');
+          const placeholders = cols.map(() => '?').join(', ');
+          const params = cols.map(c => cellToParam(ins[c]));
+          const [r] = await conn.query<ResultSetHeader>(
+            `INSERT INTO ${tbl} (${names}) VALUES (${placeholders})`,
+            params,
+          );
+          affected += r.affectedRows;
         }
-        const setSql = setCols
-          .map(c => `\`${c.replace(/`/g, '``')}\` = ?`)
-          .join(', ');
-        // 主键列在 changes 中也可能被改：先排除主键（主键修改一般不允许，避免二次定位冲突）
-        const pkCols = columns.filter(c => c.key === 'PRI').map(c => c.field);
-        const finalSet = Object.entries(u.changes).filter(([c]) => !pkCols.includes(c));
-        if (finalSet.length === 0) {
-          continue;
+
+        await conn.commit();
+        return { affected };
+      } catch (err) {
+        try {
+          await conn.rollback();
+        } catch {
+          /* rollback 失败静默 */
         }
-        const setSql2 = finalSet.map(([c]) => `\`${c.replace(/`/g, '``')}\` = ?`).join(', ');
-        const where = pkCols
-          .map(c => `\`${c.replace(/`/g, '``')}\` = ?`)
-          .join(' AND ');
-        if (!where) {
-          continue;
-        }
-        const [r] = await conn.query<ResultSetHeader>(
-          `UPDATE ${tbl} SET ${setSql2} WHERE ${where}`,
-          [...finalSet.map(([, v]) => cellToParam(v)), ...u.pkValues],
-        );
-        affected += r.affectedRows;
+        throw err;
       }
-
-      // 3) 新增（跳过 auto_increment 列）
-      for (const ins of ops.inserts) {
-        const cols = Object.keys(ins).filter(c => !autoInc.includes(c));
-        if (cols.length === 0) {
-          continue;
-        }
-        const names = cols.map(c => `\`${c.replace(/`/g, '``')}\``).join(', ');
-        const placeholders = cols.map(() => '?').join(', ');
-        const params = cols.map(c => cellToParam(ins[c]));
-        const [r] = await conn.query<ResultSetHeader>(
-          `INSERT INTO ${tbl} (${names}) VALUES (${placeholders})`,
-          params,
-        );
-        affected += r.affectedRows;
-      }
-
-      await conn.commit();
-      return { affected };
-    } catch (err) {
-      try {
-        await conn.rollback();
-      } catch {
-        /* rollback 失败静默 */
-      }
-      throw err;
-    }
+    });
   }
-}
-
-const SQL_FILTER_MAX_LENGTH = 4000;
-const SQL_FILTER_FORBIDDEN_WORDS = new Set([
-  'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'MERGE',
-  'DROP', 'ALTER', 'CREATE', 'TRUNCATE', 'GRANT', 'REVOKE',
-  'UNION', 'FROM', 'INTO', 'SET', 'CALL', 'DO', 'HANDLER', 'LOAD',
-  'SHOW', 'DESCRIBE', 'EXPLAIN', 'USE', 'PROCEDURE', 'FUNCTION', 'EVENT',
-  'DELIMITER', 'OUTFILE', 'DUMPFILE',
-]);
-
-/**
- * 规范化单表 SQL 条件：只接受 WHERE 表达式，不接受完整 SQL 或多语句。
- * 条件仍由 MySQL 解析，因此支持括号、函数、CASE、LIKE、IN、BETWEEN 等复杂表达式。
- */
-function normalizeSqlFilter(input: string | undefined): string {
-  let value = String(input ?? '').trim();
-  if (!value) return '';
-  if (/^WHERE\b/i.test(value)) {
-    value = value.replace(/^WHERE\b/i, '').trim();
-  }
-  if (!value) return '';
-  if (value.length > SQL_FILTER_MAX_LENGTH) {
-    throw new Error(`SQL 过滤条件不能超过 ${SQL_FILTER_MAX_LENGTH} 个字符`);
-  }
-
-  let quote: "'" | '"' | '`' | null = null;
-  let depth = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    const char = value[i];
-    const next = value[i + 1];
-    if (quote) {
-      if ((quote === "'" || quote === '"') && char === '\\') {
-        i += 1;
-      } else if (char === quote) {
-        if (next === quote) {
-          i += 1;
-        } else {
-          quote = null;
-        }
-      }
-      continue;
-    }
-    if (char === "'" || char === '"' || char === '`') {
-      quote = char;
-      continue;
-    }
-    if (char === ';' || (char === '-' && next === '-' && (i + 2 >= value.length || /\s/.test(value[i + 2]))) || char === '#') {
-      throw new Error('SQL 过滤条件不允许包含多语句或注释');
-    }
-    if (char === '/' && next === '*') {
-      throw new Error('SQL 过滤条件不允许包含注释');
-    }
-    if (char === '(') {
-      depth += 1;
-    } else if (char === ')') {
-      depth -= 1;
-      if (depth < 0) {
-        throw new Error('SQL 过滤条件括号不匹配');
-      }
-    }
-    if (/[A-Za-z_]/.test(char)) {
-      let end = i + 1;
-      while (end < value.length && /[A-Za-z0-9_$]/.test(value[end])) end += 1;
-      const word = value.slice(i, end).toUpperCase();
-      if (SQL_FILTER_FORBIDDEN_WORDS.has(word)) {
-        throw new Error(`SQL 过滤条件不支持关键字：${word}`);
-      }
-      i = end - 1;
-    }
-  }
-  if (quote) {
-    throw new Error('SQL 过滤条件引号不匹配');
-  }
-  if (depth !== 0) {
-    throw new Error('SQL 过滤条件括号不匹配');
-  }
-  return value;
-}
-
-function quoteIdentifier(identifier: string): string {
-  return `\`${identifier.replace(/`/g, '``')}\``;
-}
-
-function buildTableQuery(query: TableQuery, columns: ColumnInfo[]): {
-  whereSql: string;
-  orderSql: string;
-  params: unknown[];
-} {
-  const allowedColumns = new Set(columns.map(column => column.field));
-  const filters = query.filters ?? [];
-  const whereParts: string[] = [];
-  const params: unknown[] = [];
-  const operators = new Set<TableFilterOperator>([
-    '=', '!=', '<>', '>', '>=', '<', '<=', 'LIKE', 'NOT LIKE',
-    'IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'REGEXP', 'NOT REGEXP',
-    'IS NULL', 'IS NOT NULL',
-  ]);
-
-  for (const filter of filters) {
-    if (!allowedColumns.has(filter.field)) {
-      throw new Error(`过滤列不存在：${filter.field}`);
-    }
-    if (!operators.has(filter.operator)) {
-      throw new Error(`不支持的过滤操作符：${filter.operator}`);
-    }
-    const column = quoteIdentifier(filter.field);
-    if (filter.operator === 'IS NULL' || filter.operator === 'IS NOT NULL') {
-      whereParts.push(`${column} ${filter.operator}`);
-      continue;
-    }
-
-    const rawValue = String(filter.value ?? '').trim();
-    if (!rawValue) {
-      throw new Error(`${filter.field} 的过滤值不能为空`);
-    }
-    if (filter.operator === 'IN' || filter.operator === 'NOT IN') {
-      const values = rawValue.split(',').map(value => value.trim()).filter(Boolean);
-      if (values.length === 0) {
-        throw new Error(`${filter.field} 的 IN 条件至少需要一个值`);
-      }
-      whereParts.push(`${column} ${filter.operator} (${values.map(() => '?').join(', ')})`);
-      params.push(...values);
-      continue;
-    }
-    if (filter.operator === 'BETWEEN' || filter.operator === 'NOT BETWEEN') {
-      const values = rawValue.split(',').map(value => value.trim());
-      if (values.length !== 2 || values.some(value => !value)) {
-        throw new Error(`${filter.field} 的 ${filter.operator} 条件需要用逗号分隔两个值`);
-      }
-      whereParts.push(`${column} ${filter.operator} ? AND ?`);
-      params.push(values[0], values[1]);
-      continue;
-    }
-    whereParts.push(`${column} ${filter.operator} ?`);
-    params.push(rawValue);
-  }
-
-  const sqlFilter = normalizeSqlFilter(query.sqlFilter);
-  if (sqlFilter) {
-    whereParts.push(`(${sqlFilter})`);
-  }
-
-  let orderSql = '';
-  if (query.sort) {
-    if (!allowedColumns.has(query.sort.field)) {
-      throw new Error(`排序列不存在：${query.sort.field}`);
-    }
-    const direction = query.sort.direction === 'desc' ? 'DESC' : 'ASC';
-    orderSql = ` ORDER BY ${quoteIdentifier(query.sort.field)} ${direction}`;
-  }
-  return {
-    whereSql: whereParts.length > 0 ? ` WHERE ${whereParts.join(' AND ')}` : '',
-    orderSql,
-    params,
-  };
 }
 
 /**

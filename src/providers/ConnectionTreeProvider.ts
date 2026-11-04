@@ -1,5 +1,10 @@
 import * as vscode from 'vscode';
-import { ConnectionConfig, ConnectionStatus, ConnectionType } from '../connection/types';
+import {
+  ConnectionConfig,
+  ConnectionStatus,
+  ConnectionType,
+  isSqlConnectionType,
+} from '../connection/types';
 import { ConnectionStore } from '../connection/ConnectionStore';
 import { ConnectionManager } from '../connection/ConnectionManager';
 import { MysqlColumnNode, MysqlDatabaseNode, MysqlTableNode } from './nodes';
@@ -9,6 +14,7 @@ import { t } from '../i18n';
 const TYPE_ICON: Record<ConnectionType, string> = {
   ssh: 'remote',
   mysql: 'database',
+  clickhouse: 'database',
   redis: 'database',
 };
 
@@ -137,8 +143,8 @@ export class ConnectionTreeProvider implements vscode.TreeDataProvider<vscode.Tr
         .map(c => {
           const status = this.manager.getStatus(c.id);
           const node = new ConnectionNode(c, status);
-          // MySQL 已连接时可展开：优先恢复保存的展开状态，首次连接默认展开
-          if (c.type === 'mysql' && status === 'connected') {
+          // SQL 类连接（MySQL / ClickHouse）已连接时可展开：优先恢复保存的展开状态
+          if (isSqlConnectionType(c.type) && status === 'connected') {
             node.collapsibleState = this.isExpanded(`conn:${c.id}`)
               ? vscode.TreeItemCollapsibleState.Expanded
               : vscode.TreeItemCollapsibleState.Collapsed;
@@ -148,7 +154,7 @@ export class ConnectionTreeProvider implements vscode.TreeDataProvider<vscode.Tr
     }
     if (element instanceof ConnectionNode) {
       if (
-        element.config.type === 'mysql' &&
+        isSqlConnectionType(element.config.type) &&
         this.manager.getStatus(element.config.id) === 'connected'
       ) {
         return this.getDatabases(element.config.id);
@@ -165,7 +171,7 @@ export class ConnectionTreeProvider implements vscode.TreeDataProvider<vscode.Tr
   }
 
   private async getDatabases(connectionId: string): Promise<vscode.TreeItem[]> {
-    const client = this.manager.getMySqlClient(connectionId);
+    const client = this.manager.getSqlClient(connectionId);
     if (!client) {
       return [errorNode(t('mysqlNotConnectedReconnect'))];
     }
@@ -182,7 +188,7 @@ export class ConnectionTreeProvider implements vscode.TreeDataProvider<vscode.Tr
   }
 
   private async getTables(connectionId: string, database: string): Promise<vscode.TreeItem[]> {
-    const client = this.manager.getMySqlClient(connectionId);
+    const client = this.manager.getSqlClient(connectionId);
     if (!client) {
       return [errorNode(t('mysqlNotConnectedReconnect'))];
     }
@@ -210,7 +216,7 @@ export class ConnectionTreeProvider implements vscode.TreeDataProvider<vscode.Tr
     database: string,
     table: string,
   ): Promise<vscode.TreeItem[]> {
-    const client = this.manager.getMySqlClient(connectionId);
+    const client = this.manager.getSqlClient(connectionId);
     if (!client) {
       return [errorNode(t('mysqlNotConnectedReconnect'))];
     }

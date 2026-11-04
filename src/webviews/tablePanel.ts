@@ -190,7 +190,7 @@ export function openTablePanel(
   let currentQuery: TableQuery = { filters: [] };
   let pageRequestSerial = 0;
   const sendPage = async (page: number, query: TableQuery = currentQuery) => {
-    const client = manager.getMySqlClient(config.id);
+    const client = manager.getSqlClient(config.id);
     if (!client) {
       sendError(t('mysqlNotConnected'));
       return;
@@ -244,7 +244,7 @@ export function openTablePanel(
       dirtyCount = msg.payload.count ?? 0;
       return;
     }
-    const client = manager.getMySqlClient(config.id);
+    const client = manager.getSqlClient(config.id);
     if (!client) {
       sendError(t('mysqlNotConnected'));
       return;

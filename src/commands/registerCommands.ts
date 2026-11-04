@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionConfig, TYPE_LABELS } from '../connection/types';
+import { ConnectionConfig, TYPE_LABELS, isSqlConnectionType } from '../connection/types';
 import { ConnectionStore } from '../connection/ConnectionStore';
 import { ConnectionManager } from '../connection/ConnectionManager';
 import { ConnectionNode, ConnectionTreeProvider } from '../providers/ConnectionTreeProvider';
@@ -119,14 +119,14 @@ export function registerCommands(
     terminal.show();
   });
 
-  // ---------- MySQL ----------
+  // ---------- MySQL / ClickHouse ----------
 
   /** 连接级查询：打开真实 .sql 编辑器（不预选库） */
   register('openQueryPanel', async (node?: ConnectionNode) => {
     const config =
-      node && node.config.type === 'mysql'
+      node && isSqlConnectionType(node.config.type)
         ? node.config
-        : await pickConnection(store, t('chooseMysqlConnection'), c => c.type === 'mysql');
+        : await pickConnection(store, t('chooseMysqlConnection'), c => isSqlConnectionType(c.type));
     if (!config) {
       return;
     }
@@ -190,7 +190,7 @@ export function registerCommands(
     if (!node) {
       return;
     }
-    const client = manager.getMySqlClient(node.connectionId);
+    const client = manager.getSqlClient(node.connectionId);
     if (!client) {
       vscode.window.showWarningMessage(t('mysqlNotConnected'));
       return;

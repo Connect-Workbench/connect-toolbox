@@ -69,7 +69,7 @@ export async function runAndShow(
   preferDatabase?: string,
 ): Promise<void> {
   info('query run requested', config.name, String(sql).slice(0, 120));
-  const client = manager.getMySqlClient(config.id);
+  const client = manager.getSqlClient(config.id);
   const panel = openQueryResultPanel(context, manager, config);
 
   if (!client) {
@@ -89,11 +89,15 @@ export async function runAndShow(
   const statements = splitSqlStatements(sql);
   const tabs: ResultTab[] = [];
   let runError: { message: string; statementIndex?: number; statementText?: string } | undefined;
+  let truncated = false;
 
   for (let i = 0; i < statements.length; i += 1) {
     const stmt = statements[i];
     try {
       const r = await client.query(stmt.text);
+      if (r.truncated) {
+        truncated = true;
+      }
       tabs.push({ ...r, statement: stmt.text });
     } catch (err) {
       error('statement failed', String(i + 1), (err as Error).message);
@@ -108,6 +112,9 @@ export async function runAndShow(
 
   info('query done', config.name, 'statements=', String(statements.length), 'tabs=', String(tabs.length));
   post(config.id, { type: 'results', payload: { tabs, sql, error: runError } });
+  if (truncated) {
+    void vscode.window.showWarningMessage(t('resultTruncated'));
+  }
 }
 
 function postError(

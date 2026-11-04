@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import mysql from 'mysql2/promise';
 import { ConnectionConfig, ConnectionType } from '../connection/types';
 import { ConnectionStore } from '../connection/ConnectionStore';
+import { ClickHouseClient, rewriteEndpoint } from '../clients/ClickHouseClient';
 import { SshSession } from '../ssh/SshSession';
 import { locale, t } from '../i18n';
 
@@ -26,6 +27,8 @@ interface FormSavePayload {
   /** 新输入的密码/口令，留空表示保持原有 */
   password: string;
   passphrase: string;
+  /** clickhouse 专用：完整 HTTP(S) 地址 */
+  url: string;
   /** mysql/redis 专用 */
   viaSsh: boolean;
   sshConnectionId: string;
@@ -154,6 +157,7 @@ async function buildConfig(
     type: p.type,
     host: p.host,
     port: p.port,
+    url: p.type === 'clickhouse' ? p.url.trim() || undefined : undefined,
     username: p.username.trim() || undefined,
     passwordRef,
     privateKeyPath: p.type === 'ssh' && p.authMethod === 'privateKey' ? p.privateKeyPath || undefined : undefined,
@@ -207,7 +211,7 @@ async function testConnection(
     return { ok: true, message: t('sshConnectionSuccess') };
   }
 
-  if (p.type === 'mysql') {
+  if (p.type === 'mysql' || p.type === 'clickhouse') {
     let host = p.host;
     let port = p.port;
     let session: SshSession | undefined;
@@ -230,6 +234,23 @@ async function testConnection(
       const password =
         passwordOverride ??
         (existing?.passwordRef ? await store.getSecret(existing.passwordRef) : undefined);
+
+      if (p.type === 'clickhouse') {
+        const endpoint = rewriteEndpoint(
+          p.url?.trim() || `http://${host}:${port}`,
+          host,
+          port,
+        );
+        const chClient = new ClickHouseClient(
+          endpoint,
+          p.username.trim() || 'default',
+          password,
+        );
+        await chClient.connect();
+        await chClient.close();
+        return { ok: true, message: t('clickhouseConnectionSuccess') };
+      }
+
       const conn = await mysql.createConnection({
         host,
         port,
@@ -339,6 +360,7 @@ function renderHtml(webview: vscode.Webview): string {
     <div class="seg" id="typeSeg">
       <label><input type="radio" name="type" value="ssh">SSH</label>
       <label><input type="radio" name="type" value="mysql">MySQL</label>
+      <label><input type="radio" name="type" value="clickhouse">ClickHouse</label>
       <label><input type="radio" name="type" value="redis">Redis</label>
     </div>
   </div>
@@ -347,9 +369,16 @@ function renderHtml(webview: vscode.Webview): string {
 
   <div class="row"><label>${t('descriptionOptional')}</label><input type="text" id="description"></div>
 
-  <div class="inline">
+  <div class="inline" id="hostPortRow">
     <div class="row"><label>${t('hostRequired')}</label><input type="text" id="host"><div class="field-error" data-for="host">${t('enterHost')}</div></div>
     <div class="row" style="flex:0 0 110px"><label>${t('portRequired')}</label><input type="text" id="port"><div class="field-error" data-for="port">${t('portRange')}</div></div>
+  </div>
+
+  <div class="row hidden" id="urlRow">
+    <label>${t('connectionUrl')}</label>
+    <input type="text" id="url" placeholder="http://host:8123">
+    <div class="hint">${t('connectionUrlHint')}</div>
+    <div class="field-error" data-for="url">${t('connectionUrlInvalid')}</div>
   </div>
 
   <div class="row"><label id="usernameLabel">${t('username')}</label><input type="text" id="username"><div class="field-error" data-for="username">${t('sshUsernameRequired')}</div></div>
@@ -460,11 +489,37 @@ function renderHtml(webview: vscode.Webview): string {
     return sel ? sel.value : 'ssh';
   }
 
+  function defaultPort(type) {
+    if (type === 'ssh') { return '22'; }
+    if (type === 'mysql') { return '3306'; }
+    if (type === 'clickhouse') { return '8123'; }
+    return '6379';
+  }
+
+  /** 解析 http(s) 地址，返回 { host, port }；非法返回 null */
+  function parseEndpoint(value) {
+    try {
+      var u = new URL(value);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') { return null; }
+      if (!u.hostname) { return null; }
+      return {
+        host: u.hostname,
+        port: u.port ? Number(u.port) : (u.protocol === 'https:' ? 8443 : 8123)
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
   function refreshVisibility() {
     var type = currentType();
     var isSsh = type === 'ssh';
     $('authSection').classList.toggle('hidden', !isSsh);
     $('connSection').classList.toggle('hidden', isSsh);
+
+    var isClickHouse = type === 'clickhouse';
+    $('hostPortRow').classList.toggle('hidden', isClickHouse);
+    $('urlRow').classList.toggle('hidden', !isClickHouse);
 
     var auth = document.querySelector('input[name=auth]:checked');
     var useKey = auth && auth.value === 'privateKey';
@@ -499,9 +554,14 @@ function renderHtml(webview: vscode.Webview): string {
       if (bad) { ok = false; }
     };
     need('name', $('name').value.trim() !== '', 'name');
-    need('host', $('host').value.trim() !== '', 'host');
-    var port = Number($('port').value);
-    need('port', Number.isInteger(port) && port >= 1 && port <= 65535, 'port');
+    if (type === 'clickhouse') {
+      // ClickHouse 走 HTTP，只校验 URL
+      need('url', parseEndpoint($('url').value.trim()) !== null, 'url');
+    } else {
+      need('host', $('host').value.trim() !== '', 'host');
+      var port = Number($('port').value);
+      need('port', Number.isInteger(port) && port >= 1 && port <= 65535, 'port');
+    }
     if (type === 'ssh') {
       need('username', $('username').value.trim() !== '', 'username');
       var useKey = document.querySelector('input[name=auth]:checked').value === 'privateKey';
@@ -523,12 +583,25 @@ function renderHtml(webview: vscode.Webview): string {
     var type = currentType();
     var auth = document.querySelector('input[name=auth]:checked').value;
     var conn = document.querySelector('input[name=conn]:checked').value;
+    // ClickHouse：host/port 由 URL 解析，其余类型直接取输入框
+    var host = $('host').value.trim();
+    var port = Number($('port').value);
+    var url = '';
+    if (type === 'clickhouse') {
+      url = $('url').value.trim();
+      var endpoint = parseEndpoint(url);
+      if (endpoint) {
+        host = endpoint.host;
+        port = endpoint.port;
+      }
+    }
     return {
       name: $('name').value.trim(),
       description: $('description').value.trim(),
       type: type,
-      host: $('host').value.trim(),
-      port: Number($('port').value),
+      host: host,
+      port: port,
+      url: url,
       username: $('username').value.trim(),
       authMethod: auth,
       privateKeyPath: $('privateKeyPath').value.trim(),
@@ -556,7 +629,10 @@ function renderHtml(webview: vscode.Webview): string {
       $('name').value = c ? c.name : '';
       $('description').value = c && c.description ? c.description : '';
       $('host').value = c ? c.host : '';
-      $('port').value = c ? String(c.port) : (type === 'ssh' ? '22' : type === 'mysql' ? '3306' : '6379');
+      $('port').value = c ? String(c.port) : defaultPort(type);
+      if (type === 'clickhouse') {
+        $('url').value = c && c.url ? c.url : (c ? 'http://' + c.host + ':' + c.port : '');
+      }
       $('username').value = c && c.username ? c.username : (type === 'ssh' ? 'root' : '');
       $('group').value = c && c.group ? c.group : '';
 
@@ -595,10 +671,24 @@ function renderHtml(webview: vscode.Webview): string {
     r.addEventListener('change', function () {
       if (r.name === 'type') {
         var type = r.value;
-        if ($('port').value === '22' || $('port').value === '3306' || $('port').value === '6379') {
-          $('port').value = type === 'ssh' ? '22' : type === 'mysql' ? '3306' : '6379';
+        if ($('port').value === '22' || $('port').value === '3306' || $('port').value === '8123' || $('port').value === '6379') {
+          $('port').value = defaultPort(type);
         }
         if (!$('username').value) { $('username').value = type === 'ssh' ? 'root' : ''; }
+        if (type === 'clickhouse') {
+          // 从其它类型切过来时，用主机/端口先拼一个可用地址
+          if (!$('url').value.trim()) {
+            $('url').value = 'http://' + ($('host').value.trim() || 'localhost') + ':' + ($('port').value || '8123');
+          }
+        } else if ($('url').value.trim()) {
+          // 切回其它类型：把 URL 里的地址回填到 host/port
+          var endpoint = parseEndpoint($('url').value.trim());
+          if (endpoint) {
+            $('host').value = endpoint.host;
+            $('port').value = String(endpoint.port);
+          }
+          $('url').value = '';
+        }
       }
       refreshVisibility();
     });

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ConnectionStore, TreeFilter } from '../connection/ConnectionStore';
+import { isSqlConnectionType } from '../connection/types';
 import { ConnectionManager } from '../connection/ConnectionManager';
 import { ConnectionNode, ConnectionTreeProvider } from '../providers/ConnectionTreeProvider';
 import { MysqlDatabaseNode, MysqlTableNode } from '../providers/nodes';
@@ -22,7 +23,7 @@ export async function runFilter(
   if (!connectionId) {
     return;
   }
-  const client = manager.getMySqlClient(connectionId);
+  const client = manager.getSqlClient(connectionId);
   if (!client) {
     vscode.window.showWarningMessage(t('filterMysqlNotConnected'));
     return;
@@ -69,8 +70,8 @@ function resolveTarget(
   if (target instanceof MysqlTableNode) {
     return { connectionId: target.connectionId, kind: 'table', database: target.database };
   }
-  // MySQL 连接节点：过滤数据库
-  if (target instanceof ConnectionNode && target.config.type === 'mysql') {
+  // SQL 类连接节点：过滤数据库
+  if (target instanceof ConnectionNode && isSqlConnectionType(target.config.type)) {
     return { connectionId: target.config.id, kind: 'database' };
   }
   return { kind: 'database' };
