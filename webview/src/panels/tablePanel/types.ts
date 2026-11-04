@@ -11,7 +11,15 @@ export interface ColumnDef {
 }
 
 /** 单元格值（主进程已序列化：Date→ISO、Buffer→{__type:'hex',value}、bigint→string） */
-export type CellValue = string | number | null | { __type: 'hex'; value: string };
+export type CellValue =
+  | string
+  | number
+  | boolean
+  | null
+  | { __type: 'hex'; value: string }
+  /** ClickHouse Map/Tuple、MySQL json 列等结构化值 */
+  | Record<string, unknown>
+  | unknown[];
 
 /** 与 MySQL 一致的过滤操作符，直接展示给有 SQL 经验的用户 */
 export type FilterOperator =

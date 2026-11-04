@@ -179,21 +179,33 @@ const ColumnFilterPopover = React.memo(function ColumnFilterPopover({
   );
 });
 
+/** 结构化值（Map/Tuple/json）序列化为 JSON 文本 */
+function stringifyStructured(v: object): string {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
 /** 单元格展示文本 */
 export function cellText(v: CellValue): string {
   if (v === null || v === undefined) return 'NULL';
-  if (typeof v === 'object' && v.__type === 'hex') return '0x' + v.value;
+  if (isHex(v)) return '0x' + (v as { value: string }).value;
+  if (typeof v === 'object') return stringifyStructured(v);
   return String(v);
 }
 
 export function isHex(v: CellValue): boolean {
-  return !!(v && typeof v === 'object' && v.__type === 'hex');
+  return !!v && typeof v === 'object' && !Array.isArray(v) && (v as { __type?: string }).__type === 'hex';
 }
 
 /** 传给主进程的编辑值：NULL → ''（表示保持 NULL） */
 export function editValue(v: CellValue): string {
   if (v === null || v === undefined) return '';
-  if (typeof v === 'object' && v.__type === 'hex') return '0x' + v.value;
+  if (isHex(v)) return '0x' + (v as { value: string }).value;
+  // 编辑结构化值时要写回 JSON 文本，否则会变成 "[object Object]"
+  if (typeof v === 'object') return stringifyStructured(v);
   return String(v);
 }
 

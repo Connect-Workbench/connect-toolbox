@@ -3,13 +3,29 @@ import { Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 
 /** 与主进程一致的值形态（Date/hex/bigint 已序列化） */
-export type CellValue = string | number | null | { __type: 'hex'; value: string };
+export type CellValue =
+  | string
+  | number
+  | boolean
+  | null
+  | { __type: 'hex'; value: string }
+  /** ClickHouse Map/Tuple、MySQL json 列等结构化值 */
+  | Record<string, unknown>
+  | unknown[];
 
 /** 单元格展示文本 */
 export function cellText(v: CellValue | unknown): string {
   if (v === null || v === undefined) return 'NULL';
   if (typeof v === 'object' && (v as { __type?: string }).__type === 'hex') {
     return '0x' + (v as { value: string }).value;
+  }
+  // 结构化值原样序列化，避免退化成 "[object Object]"
+  if (typeof v === 'object') {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
   }
   return String(v);
 }
